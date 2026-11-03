@@ -1,0 +1,171 @@
+﻿<UserControl x:Class="SchoolEvaluationERP.Views.ScoreEntryView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             FlowDirection="RightToLeft"
+             FontFamily="Segoe UI">
+
+    <Grid Margin="6">
+        <Border Style="{StaticResource CardStyle}" Padding="18">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 0: شريط اختيار القالب والفترة الزمنية (السنة / الشهر / الأسبوع) -->
+                <Border Grid.Row="0" Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="10"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0">
+                            <TextBlock Text="إدخال التقييمات الأسبوعية للموظفين (تحويل تلقائي لوزن المقيم الفعلي)"
+                                       FontSize="17" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
+                            <TextBlock Text="اختر قالب المقيم ثم حدد السنة والشهر ورقم الأسبوع (من 1 إلى 4). يمنع النظام تكرار إدخال نفس الأسبوع لنفس القالب في نفس الشهر."
+                                       FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                        </StackPanel>
+
+                        <Grid Grid.Row="2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="1.6*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="0.75*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="1*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="1.45*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="1. المقيم / قالب التقييم:" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmbTemplate" Style="{StaticResource ModernComboBox}"
+                                          IsEditable="True" StaysOpenOnEdit="True"
+                                          DisplayMemberPath="EvaluatorName" SelectedValuePath="TemplateID"
+                                          SelectionChanged="CmbTemplate_SelectionChanged"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="2. السنة:" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmbYear" Style="{StaticResource ModernComboBox}"
+                                          SelectionChanged="PeriodFilter_SelectionChanged"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="4">
+                                <TextBlock Text="3. الشهر:" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmbMonth" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="DisplayText" SelectedValuePath="MonthNumber"
+                                          SelectionChanged="PeriodFilter_SelectionChanged"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="6">
+                                <TextBlock Text="4. رقم الأسبوع وحالته:" FontWeight="SemiBold" FontSize="12.5" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="CmbWeek" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="DisplayText" SelectedValuePath="WeekNumber"
+                                          SelectionChanged="CmbWeek_SelectionChanged"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="8" VerticalAlignment="Bottom">
+                                <Button x:Name="BtnReloadWorkspace" Content="🔄 تحديث الاستمارة"
+                                        Style="{StaticResource SecondaryButton}" Height="38" Padding="14,0"
+                                        Click="BtnReloadWorkspace_Click"/>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
+                </Border>
+
+                <!-- 1: شريط حالة الاستمارة وأزرار التعبئة السريعة والحفظ (مقسم لسطرين واسعين لمنع انضغاط الكلام وبدون مربع الورقة النشطة) -->
+                <Border Grid.Row="1" Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="10"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- السطر الأول: عنوان المقيم والفترة + شارة الحالة + التلميح بعرض كامل ومريح -->
+                        <StackPanel Grid.Row="0">
+                            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock x:Name="TxtWorkspaceHeader"
+                                           Text="يرجى اختيار قالب المقيم لبدء إدخال الدرجات الأسبوعية"
+                                           FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"
+                                           VerticalAlignment="Center" Margin="0,0,12,0"/>
+
+                                <Border x:Name="BadgeWeekStatus" Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="12,4" VerticalAlignment="Center" Visibility="Collapsed">
+                                    <TextBlock x:Name="TxtBadgeWeekStatus" Text="أسبوع جديد متاح للإدخال" Foreground="#047857" FontWeight="Bold" FontSize="12.5"/>
+                                </Border>
+                            </WrapPanel>
+
+                            <TextBlock x:Name="TxtWorkspaceHint"
+                                       Text="💡 تلميح: يمكنك الكتابة مباشرة داخل خلايا الدرجات والتنقل بزر (Tab أو Enter)، أو استخدام زر (الدرجة الكاملة للورقة) ثم تعديل درجات من لديهم خصم فقط."
+                                       FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                        </StackPanel>
+
+                        <!-- السطر الثاني: شريط الأزرار مرتب ومفرود بوضوح تام -->
+                        <WrapPanel Grid.Row="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button x:Name="BtnUnlockSavedWeekEdit" Content="✏ تفعيل تعديل هذا الأسبوع"
+                                    Style="{StaticResource SecondaryButton}" Height="36" Padding="14,0" Margin="0,0,8,0"
+                                    Visibility="Collapsed"
+                                    Click="BtnUnlockSavedWeekEdit_Click"/>
+
+                            <Button x:Name="BtnFillFullMarksAll" Content="⚡ الدرجة الكاملة للورقة (100)"
+                                    Style="{StaticResource SecondaryButton}" Height="36" Padding="14,0" Margin="0,0,8,0"
+                                    ToolTip="منح الدرجة القصوى لجميع الموظفين في هذه الورقة بضغطة واحدة"
+                                    Click="BtnFillFullMarksAll_Click"/>
+
+                            <Button x:Name="BtnFillFullMarksSelected" Content="✔ الدرجة الكاملة للمحددين"
+                                    Style="{StaticResource SecondaryButton}" Height="36" Padding="14,0" Margin="0,0,8,0"
+                                    ToolTip="منح الدرجة القصوى للموظفين المحددين بالماوس أو Ctrl أو Shift"
+                                    Click="BtnFillFullMarksSelected_Click"/>
+
+                            <Button x:Name="BtnClearMarksZero" Content="🧹 تصفير الورقة"
+                                    Style="{StaticResource SecondaryButton}" Height="36" Padding="12,0" Margin="0,0,8,0"
+                                    Click="BtnClearMarksZero_Click"/>
+
+                            <Button x:Name="BtnSaveWeeklyEvaluation" Content="💾 حفظ واعتماد تقييم الأسبوع"
+                                    Style="{StaticResource PrimaryButton}" Height="36" Padding="18,0"
+                                    Click="BtnSaveWeeklyEvaluation_Click"/>
+                        </WrapPanel>
+                    </Grid>
+                </Border>
+
+                <!-- 2: جدول إدخال الدرجات الأسبوعية -->
+                <DataGrid Grid.Row="2" x:Name="GridWeeklyScores"
+                          CanUserSortColumns="False"
+                          SelectionMode="Extended"
+                          SelectionUnit="FullRow"
+                          BeginningEdit="GridWeeklyScores_BeginningEdit"
+                          CellEditEnding="GridWeeklyScores_CellEditEnding"/>
+
+                <!-- 3: الشريط السفلي لأوراق القالب -->
+                <Border Grid.Row="3" x:Name="PanelBottomSheetsBar" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1.5" CornerRadius="8" Padding="12,8" Margin="0,12,0,0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="12"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" Text="📑 أوراق القالب:" Foreground="#1E3A8A" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0"/>
+
+                        <ScrollViewer Grid.Column="2" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="StackSheetTabs" Orientation="Horizontal" VerticalAlignment="Center"/>
+                        </ScrollViewer>
+
+                        <TextBlock Grid.Column="4" x:Name="TxtSheetAverageBadge"
+                                   Text="متوسط درجات الورقة: 0 / 100"
+                                   Foreground="#1E40AF" FontWeight="Bold" FontSize="13" VerticalAlignment="Center" Margin="8,0"/>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Border>
+    </Grid>
+</UserControl>

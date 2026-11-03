@@ -1,0 +1,46 @@
+﻿<Window x:Class="SchoolEvaluationERP.Views.SelectEvaluatorDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="اختيار المقيم لإنشاء قالب تقييم جديد"
+        Width="480" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{StaticResource AppBgBrush}"
+        FlowDirection="RightToLeft"
+        FontFamily="Segoe UI">
+
+    <Grid Margin="18">
+        <Border Style="{StaticResource CardStyle}" Padding="22">
+            <StackPanel>
+                <TextBlock Text="إنشاء قالب تقييم جديد" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                <TextBlock Text="ابدأ بكتابة اسم المقيم لتظهر لك الأسماء المشابهة المسجلة في الأساسيات، ثم اختر الاسم الصحيح واضغط إنشاء."
+                           FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,14"/>
+
+                <TextBlock Text="ابحث عن اسم المقيم:" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                <TextBox x:Name="TxtSearchEvaluator" Style="{StaticResource ModernTextBox}"
+                         TextChanged="TxtSearchEvaluator_TextChanged" Margin="0,0,0,8"/>
+
+                <TextBlock Text="الأسماء المطابقة (اضغط على الاسم لاختياره):" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,6"/>
+                <ListBox x:Name="LstEvaluators" Height="165" BorderBrush="#CBD5E1" BorderThickness="1" Background="#F8FAFC"
+                         DisplayMemberPath="EvaluatorName" SelectedValuePath="EvaluatorID"
+                         FontSize="14" MouseDoubleClick="LstEvaluators_MouseDoubleClick" Margin="0,0,0,16"/>
+
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="10"/>
+                        <ColumnDefinition Width="100"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0" x:Name="BtnCreate" Content="✔ إنشاء والانتقال لتجهيز القالب"
+                            Style="{StaticResource PrimaryButton}" Height="42" IsDefault="True"
+                            Click="BtnCreate_Click"/>
+
+                    <Button Grid.Column="2" Content="إلغاء"
+                            Style="{StaticResource SecondaryButton}" Height="42" IsCancel="True"
+                            Click="BtnCancel_Click"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

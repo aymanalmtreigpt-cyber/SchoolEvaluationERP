@@ -1,0 +1,133 @@
+<Window x:Class="SchoolEvaluationERP.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="نظام تقييم موظفي المدارس واحتساب الحوافز الشهرية - الإصدار المؤسسي"
+        Height="780" Width="1340"
+        MinHeight="680" MinWidth="1100"
+        WindowStartupLocation="CenterScreen"
+        WindowState="Maximized"
+        Background="{StaticResource AppBgBrush}"
+        FlowDirection="RightToLeft"
+        FontFamily="Segoe UI">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <!-- القائمة الجانبية اليمنى -->
+            <ColumnDefinition Width="275"/>
+            <!-- مساحة العمل الرئيسية -->
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ==================== القائمة الجانبية (Sidebar) ==================== -->
+        <Border Grid.Column="0" Background="{StaticResource SidebarBgBrush}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- ترويسة النظام في القائمة الجانبية -->
+                <Border Padding="20,24,20,18" BorderBrush="#1E293B" BorderThickness="0,0,0,1">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="42" Height="42" CornerRadius="10" Background="{StaticResource PrimaryBrush}" Margin="0,0,12,0">
+                            <TextBlock Text="📊" FontSize="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="نظام التقييم والحوافز" Foreground="White" FontSize="16" FontWeight="Bold"/>
+                            <TextBlock Text="إدارة المدارس والفروع (LAN)" Foreground="#94A3B8" FontSize="11.5"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- أزرار الشاشات الست (تظهر وتختفي ديناميكياً حسب صلاحيات الموظف) -->
+                <StackPanel Grid.Row="1" Margin="0,14,0,0">
+                    <TextBlock Text="القوائم الرئيسية للنظام" Foreground="#64748B" FontSize="11.5" FontWeight="Bold" Margin="22,0,0,8"/>
+
+                    <Button x:Name="NavMasterData" Content="🗂️  1. صفحة الأساسيات"
+                            Style="{StaticResource SidebarNavButton}" Tag="MasterData"
+                            Click="NavButton_Click"/>
+
+                    <Button x:Name="NavTemplates" Content="📝  2. قوالب التقييم (A4)"
+                            Style="{StaticResource SidebarNavButton}" Tag="Templates"
+                            Click="NavButton_Click"/>
+
+                    <Button x:Name="NavScoreEntry" Content="✅  3. إدخال التقييمات الأسبوعية"
+                            Style="{StaticResource SidebarNavButton}" Tag="ScoreEntry"
+                            Click="NavButton_Click"/>
+
+                    <Button x:Name="NavHistoryLog" Content="🕒  4. سجل التقييمات والأرشيف"
+                            Style="{StaticResource SidebarNavButton}" Tag="HistoryLog"
+                            Click="NavButton_Click"/>
+
+                    <Button x:Name="NavFinalReport" Content="💰  5. التقرير النهائي والحوافز"
+                            Style="{StaticResource SidebarNavButton}" Tag="FinalReport"
+                            Click="NavButton_Click"/>
+
+                    <Separator Background="#1E293B" Margin="16,12"/>
+
+                    <TextBlock Text="الإدارة والأمان" Foreground="#64748B" FontSize="11.5" FontWeight="Bold" Margin="22,0,0,8"/>
+
+                    <Button x:Name="NavUserManagement" Content="🔐  6. المستخدمون والصلاحيات"
+                            Style="{StaticResource SidebarNavButton}" Tag="UserManagement"
+                            Click="NavButton_Click"/>
+                </StackPanel>
+
+                <!-- بطاقة المستخدم الحالي وأزرار تغيير كلمة السر والخروج -->
+                <Border Grid.Row="2" Background="#1E293B" Margin="12" CornerRadius="10" Padding="14">
+                    <StackPanel>
+                        <TextBlock x:Name="TxtCurrentUserName" Text="مدير النظام العام" Foreground="White" FontWeight="Bold" FontSize="14"/>
+                        <TextBlock x:Name="TxtCurrentUserRole" Text="صلاحية كاملة (Admin)" Foreground="#38BDF8" FontSize="12" Margin="0,2,0,12"/>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <Button Grid.Column="0" Content="🔑 كلمة السر"
+                                    Style="{StaticResource SecondaryButton}" Height="32" FontSize="12"
+                                    Click="BtnChangeOwnPassword_Click"/>
+
+                            <Button Grid.Column="2" Content="خروج"
+                                    Style="{StaticResource DangerButton}" Height="32" Padding="14,0" FontSize="12"
+                                    Click="BtnLogout_Click"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- ==================== منطقة عرض الشاشات (Main Content Area) ==================== -->
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="68"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- الشريط العلوي (Top Header Bar) -->
+            <Border Grid.Row="0" Background="White" BorderBrush="#E2E8F0" BorderThickness="0,0,0,1" Padding="24,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="TxtActivePageTitle" Text="إدارة المستخدمين والصلاحيات" FontSize="20" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="12,6">
+                            <TextBlock x:Name="TxtPermissionsBadge" Text="الصلاحيات الفعالة لهذه الشاشة: قراءة | إضافة | تعديل | حذف" Foreground="#047857" FontSize="12.5" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- حاوية الشاشات الديناميكية -->
+            <ContentControl Grid.Row="1" x:Name="MainContentHost" Margin="18"/>
+        </Grid>
+    </Grid>
+</Window>

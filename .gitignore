@@ -1,5 +1,26 @@
-﻿.vs/
-bin/
-obj/
-*.user
+# Visual Studio & .NET Build Artifacts
+.vs/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+[Tt]est[Rr]esults/
+[Pp]ublish/
+
+# User-specific files
+*.rsuser
 *.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Temporary & Office lock files
+*.tmp
+*.bak
+*.swp
+~$*.xlsx
+~$*.xls
+~$*.docx
+
+# Local archives
+*.zip
