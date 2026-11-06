@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="SchoolEvaluationERP.Views.HistoryLogView"
+<UserControl x:Class="SchoolEvaluationERP.Views.HistoryLogView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FlowDirection="RightToLeft"
@@ -7,8 +7,8 @@
     <Grid Margin="4">
         <TabControl x:Name="MainHistoryTabControl" Background="Transparent" BorderThickness="0" FontSize="14">
 
-            <!-- التبويب الأول: 1. سجل التقييمات والأرشيف -->
-            <TabItem Header="  🕒 1. سجل التقييمات والأرشيف  " Padding="14,8" FontWeight="Bold">
+            <!-- التبويب الأول: 1. سجل التقييمات الشهرية والأرشيف -->
+            <TabItem Header="  🕒 1. سجل التقييمات الشهرية والأرشيف  " Padding="14,8" FontWeight="Bold">
                 <Border Style="{StaticResource CardStyle}" Margin="0,12,0,0" Padding="18">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -26,9 +26,9 @@
                             </Grid.ColumnDefinitions>
 
                             <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                                <TextBlock Text="سجل التقييمات الأسبوعية والأرشيف التاريخي"
+                                <TextBlock Text="سجل التقييمات الشهرية والأرشيف التاريخي"
                                            FontSize="17" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
-                                <TextBlock Text="اضغط مرتين على أي تقييم (أو اضغط عرض الدرجات) لفتحه في وضع القراءة فقط، وللتعديل حدد السجل واضغط (✏ فتح وتعديل التقييم). يمكنك تحديد عدة سجلات بالماوس أو Ctrl أو Shift."
+                                <TextBlock Text="اضغط مرتين على أي تقييم شهري (أو اضغط عرض الدرجات) لفتحه في وضع القراءة فقط، وللتعديل حدد السجل واضغط (✏ فتح وتعديل التقييم)."
                                            FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                             </StackPanel>
 
@@ -47,27 +47,25 @@
                             </WrapPanel>
                         </Grid>
 
-                        <!-- شريط البحث والفلترة المتقدمة (المقيم / السنة / الشهر / الأسبوع) -->
+                        <!-- شريط البحث والفلترة المتقدمة (المقيم / السنة / الشهر) -->
                         <Border Grid.Row="1" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,12">
                             <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="1.4*"/>
-                                    <ColumnDefinition Width="10"/>
-                                    <ColumnDefinition Width="0.85*"/>
-                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="1.6*"/>
+                                    <ColumnDefinition Width="12"/>
                                     <ColumnDefinition Width="1*"/>
-                                    <ColumnDefinition Width="10"/>
-                                    <ColumnDefinition Width="0.95*"/>
-                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="12"/>
+                                    <ColumnDefinition Width="1.15*"/>
+                                    <ColumnDefinition Width="12"/>
                                     <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="14"/>
+                                    <ColumnDefinition Width="16"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock Text="🔍 بحث باسم المقيم:" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                    <TextBlock Text="🔍 بحث باسم المقيم أو المجموعة:" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4"/>
                                     <TextBox x:Name="TxtSearchEvaluator" Style="{StaticResource ModernTextBox}"
-                                             ToolTip="اكتب اسم المقيم لفلترة السجل..."
+                                             ToolTip="اكتب اسم المقيم أو مجموعته لفلترة السجل..."
                                              TextChanged="FilterControl_Changed"/>
                                 </StackPanel>
 
@@ -85,26 +83,19 @@
                                               SelectionChanged="FilterCombo_SelectionChanged"/>
                                 </StackPanel>
 
-                                <StackPanel Grid.Column="6">
-                                    <TextBlock Text="الأسبوع:" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                                    <ComboBox x:Name="CmbFilterWeek" Style="{StaticResource ModernComboBox}"
-                                              DisplayMemberPath="DisplayText" SelectedValuePath="Value"
-                                              SelectionChanged="FilterCombo_SelectionChanged"/>
-                                </StackPanel>
-
-                                <StackPanel Grid.Column="8" VerticalAlignment="Bottom">
+                                <StackPanel Grid.Column="6" VerticalAlignment="Bottom">
                                     <Button Content="عرض الكل" Style="{StaticResource SecondaryButton}" Height="38" Padding="14,0"
                                             Click="BtnResetFilters_Click"/>
                                 </StackPanel>
 
-                                <StackPanel Grid.Column="10" VerticalAlignment="Bottom" Margin="0,0,0,8">
+                                <StackPanel Grid.Column="8" VerticalAlignment="Bottom" Margin="0,0,0,8">
                                     <TextBlock x:Name="TxtRecordsCountBadge" Text="إجمالي السجلات: 0"
                                                FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </Grid>
                         </Border>
 
-                        <!-- جدول سجل التقييمات المحفوظة -->
+                        <!-- جدول سجل التقييمات الشهرية المحفوظة -->
                         <DataGrid Grid.Row="2" x:Name="GridHistoryRecords"
                                   IsReadOnly="True"
                                   SelectionMode="Extended"
@@ -112,10 +103,10 @@
                                   SelectionChanged="GridHistoryRecords_SelectionChanged"
                                   MouseDoubleClick="GridHistoryRecords_MouseDoubleClick">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="رقم السجل" Binding="{Binding RecordID}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="80"/>
-                                <DataGridTextColumn Header="اسم المقيم المسؤول" Binding="{Binding EvaluatorName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="175"/>
-                                <DataGridTextColumn Header="الفترة (الشهر والأسبوع)" Binding="{Binding PeriodDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="195"/>
-                                <DataGridTextColumn Header="نسخة القالب" Binding="{Binding VersionDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="85"/>
+                                <DataGridTextColumn Header="رقم السجل" Binding="{Binding RecordID}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="75"/>
+                                <DataGridTextColumn Header="المقيم المسؤول والمجموعة" Binding="{Binding EvaluatorWithGroupDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="205"/>
+                                <DataGridTextColumn Header="شهر التقييم" Binding="{Binding PeriodDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="145"/>
+                                <DataGridTextColumn Header="نسخة القالب" Binding="{Binding VersionDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="80"/>
                                 <DataGridTextColumn Header="عدد الموظفين" Binding="{Binding EvaluatedEmployeesCount}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="95"/>
                                 <DataGridTextColumn Header="متوسط التقييم" Binding="{Binding AverageScoreDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="105"/>
                                 <DataGridTextColumn Header="أُدخل بواسطة" Binding="{Binding CreatedByFullName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
@@ -126,7 +117,7 @@
                                             <Button Content="👁 عرض الدرجات"
                                                     Style="{StaticResource SecondaryButton}"
                                                     Height="30" Padding="8,0" FontSize="12"
-                                                    ToolTip="فتح درجات هذا التقييم في وضع القراءة فقط"
+                                                    ToolTip="فتح درجات هذا التقييم الشهري في وضع القراءة فقط"
                                                     Click="BtnRowViewReadOnly_Click"/>
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
@@ -137,8 +128,8 @@
                 </Border>
             </TabItem>
 
-            <!-- التبويب الثاني: 2. استعراض وتعديل درجات التقييم -->
-            <TabItem x:Name="TabRecordDetails" Header="  📋 2. استعراض وتعديل درجات التقييم  " Padding="14,8" FontWeight="Bold">
+            <!-- التبويب الثاني: 2. استعراض وتعديل درجات التقييم الشهري -->
+            <TabItem x:Name="TabRecordDetails" Header="  📋 2. استعراض وتعديل درجات التقييم الشهري  " Padding="14,8" FontWeight="Bold">
                 <Border Style="{StaticResource CardStyle}" Margin="0,12,0,0" Padding="18">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -148,7 +139,7 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <!-- 0: الشريط العلوي لتفاصيل السجل (مقسم لسطرين واسعين وبدون مربع الورقة النشطة) -->
+                        <!-- 0: الشريط العلوي لتفاصيل السجل -->
                         <Border Grid.Row="0" Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="16,12" Margin="0,0,0,12">
                             <Grid>
                                 <Grid.RowDefinitions>
@@ -160,7 +151,7 @@
                                 <StackPanel Grid.Row="0">
                                     <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <TextBlock x:Name="TxtDetailsHeaderTitle"
-                                                   Text="لم يتم اختيار سجل تقييم بعد — اختر تقييماً من تبويب (1. سجل التقييمات والأرشيف)"
+                                                   Text="لم يتم اختيار سجل تقييم بعد — اختر تقييماً شهرياً من تبويب (1. سجل التقييمات الشهرية والأرشيف)"
                                                    FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"
                                                    VerticalAlignment="Center" Margin="0,0,12,0"/>
 
@@ -170,7 +161,7 @@
                                     </WrapPanel>
 
                                     <TextBlock x:Name="TxtDetailsSubInfo"
-                                               Text="يعرض هذا القسم الدرجات التاريخية المحفوظة للموظفين وفق نسخة القالب ووزن المقيم المعتمدين وقت التقييم."
+                                               Text="يعرض هذا القسم الدرجات التاريخية المحفوظة للموظفين وفق نسخة القالب وحصة المقيم المعتمدة وقت التقييم."
                                                FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                 </StackPanel>
 
@@ -179,6 +170,14 @@
                                             Style="{StaticResource SecondaryButton}" Height="36" Padding="12,0" Margin="0,0,8,4"
                                             Visibility="Collapsed"
                                             Click="BtnUnlockEditInDetails_Click"/>
+
+                                    <Button x:Name="BtnDetailNavHorizontal" Content="⬅ الانتقال الأفقي"
+                                            Style="{StaticResource PrimaryButton}" Height="36" Padding="12,0" Margin="0,0,6,4"
+                                            Click="BtnDetailNavHorizontal_Click"/>
+
+                                    <Button x:Name="BtnDetailNavVertical" Content="⬇ الانتقال الرأسي"
+                                            Style="{StaticResource SecondaryButton}" Height="36" Padding="12,0" Margin="0,0,12,4"
+                                            Click="BtnDetailNavVertical_Click"/>
 
                                     <Button x:Name="BtnDetailFillAll" Content="⚡ الدرجة الكاملة للورقة (100)"
                                             Style="{StaticResource SecondaryButton}" Height="36" Padding="12,0" Margin="0,0,8,4"
@@ -213,7 +212,7 @@
 
                                 <TextBlock Grid.Column="0" Text="🔍 فلترة الموظفين داخل الورقة:" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                 <TextBox Grid.Column="2" x:Name="TxtFilterSheetEmployee" Style="{StaticResource ModernTextBox}" Height="34"
-                                         ToolTip="اكتب اسم الموظف أو الفرع للبحث داخل هذه الورقة..."
+                                         ToolTip="اكتب اسم الموظف أو الفرع أو الوظيفة للبحث داخل هذه الورقة..."
                                          TextChanged="TxtFilterSheetEmployee_TextChanged"/>
                                 <Button Grid.Column="4" Content="إظهار كل موظفي الورقة" Style="{StaticResource SecondaryButton}" Height="34" Padding="10,0" FontSize="12"
                                         Click="BtnClearSheetEmployeeFilter_Click"/>
@@ -227,9 +226,10 @@
                                   SelectionMode="Extended"
                                   SelectionUnit="FullRow"
                                   BeginningEdit="GridRecordSheetScores_BeginningEdit"
+                                  PreparingCellForEdit="GridRecordSheetScores_PreparingCellForEdit"
                                   CellEditEnding="GridRecordSheetScores_CellEditEnding"/>
 
-                        <!-- 3: الشريط السفلي لأوراق التقييم المحفوظ (بلون أزرق ثلجي فاتح ومريح للعين) -->
+                        <!-- 3: الشريط السفلي لأوراق التقييم المحفوظ -->
                         <Border Grid.Row="3" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1.5" CornerRadius="8" Padding="12,8" Margin="0,12,0,0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -257,4 +257,3 @@
         </TabControl>
     </Grid>
 </UserControl>
-

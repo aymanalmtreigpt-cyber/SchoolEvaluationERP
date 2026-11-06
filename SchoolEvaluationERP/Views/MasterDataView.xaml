@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="SchoolEvaluationERP.Views.MasterDataView"
+<UserControl x:Class="SchoolEvaluationERP.Views.MasterDataView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FlowDirection="RightToLeft"
@@ -8,30 +8,26 @@
         <TabControl Background="Transparent" BorderThickness="0" FontSize="14">
 
             <!-- ========================================================================= -->
-            <!-- التبويب الأول: البيانات الأساسية (الفروع، الوظائف، المقيمين، الفئات 100 درجة) -->
+            <!-- التبويب الأول: الفروع والهيكل التنظيمي (الفئات / الوظائف / نوع الوظيفة) -->
             <!-- ========================================================================= -->
-            <TabItem Header="  🏢 1. البيانات الأساسية والفئات (الفروع / الوظائف / المقيمين / الفئات)  " Padding="14,8" FontWeight="Bold">
+            <TabItem Header="  🏢 1. الفروع والهيكل التنظيمي (الفئات / الوظائف / نوع الوظيفة)  " Padding="14,8" FontWeight="Bold">
                 <Grid Margin="0,12,0,0">
                     <Grid.RowDefinitions>
-                        <!-- الصف العلوي: البطاقات الثلاث المستقلة (الفروع، الوظائف، المقيمين) -->
                         <RowDefinition Height="1.05*"/>
-                        <RowDefinition Height="16"/>
-                        <!-- الصف السفلي: جدول الفئات المرتبطة بالفرع والمقيمين بشرط 100 درجة -->
-                        <RowDefinition Height="1.15*"/>
+                        <RowDefinition Height="14"/>
+                        <RowDefinition Height="1*"/>
                     </Grid.RowDefinitions>
 
-                    <!-- البطاقات الثلاث المستقلة -->
+                    <!-- الصف العلوي: 1. الفروع | 2. الفئات -->
                     <Grid Grid.Row="0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="14"/>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="14"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
 
                         <!-- 1. بطاقة الفروع -->
-                        <Border Grid.Column="0" Style="{StaticResource CardStyle}" Padding="16">
+                        <Border Grid.Column="0" Style="{StaticResource CardStyle}" Padding="14">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -39,33 +35,25 @@
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Text="📍 الفروع (مكان حساب الموظف)" FontSize="15.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,10"/>
+                                <TextBlock Grid.Row="0" Text="📍 1. الفروع" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,10"/>
 
-                                <Grid Grid.Row="1" Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="6"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="6"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox Grid.Column="0" x:Name="TxtBranchName" Style="{StaticResource ModernTextBox}" ToolTip="اكتب اسم الفرع (مثل: الحصبة)"/>
-                                    <Button Grid.Column="2" x:Name="BtnSaveBranch" Content="حفظ" Style="{StaticResource PrimaryButton}" Height="38" Padding="14,0" Click="BtnSaveBranch_Click"/>
-                                    <Button Grid.Column="4" x:Name="BtnDeleteBranch" Content="حذف" Style="{StaticResource DangerButton}" Height="38" Padding="12,0" Click="BtnDeleteBranch_Click"/>
-                                </Grid>
+                                <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="BtnCreateBranch" Content="+ إنشاء فرع" Style="{StaticResource PrimaryButton}" Height="34" Padding="12,0" FontSize="12.5" Margin="0,0,6,4" Click="BtnCreateBranch_Click"/>
+                                    <Button x:Name="BtnEditBranch" Content="✏ تعديل" Style="{StaticResource SecondaryButton}" Height="34" Padding="12,0" FontSize="12.5" Margin="0,0,6,4" Click="BtnEditBranch_Click"/>
+                                    <Button x:Name="BtnDeleteBranch" Content="🗑 حذف" Style="{StaticResource DangerButton}" Height="34" Padding="10,0" FontSize="12.5" Margin="0,0,0,4" Click="BtnDeleteBranch_Click"/>
+                                </WrapPanel>
 
-                                <DataGrid Grid.Row="2" x:Name="GridBranches" IsReadOnly="True" SelectionChanged="GridBranches_SelectionChanged">
+                                <DataGrid Grid.Row="2" x:Name="GridBranches" IsReadOnly="True" SelectionMode="Single" MouseDoubleClick="GridBranches_MouseDoubleClick">
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="اسم الفرع" Binding="{Binding BranchName}" Width="*"/>
-                                        <DataGridTextColumn Header="الفئات" Binding="{Binding CategoriesCount}" Width="65"/>
-                                        <DataGridTextColumn Header="الموظفون" Binding="{Binding EmployeesCount}" Width="75"/>
+                                        <DataGridTextColumn Header="اسم الفرع" Binding="{Binding BranchName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                        <DataGridTextColumn Header="الموظفون" Binding="{Binding EmployeesCount}" Width="85"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </Grid>
                         </Border>
 
-                        <!-- 2. بطاقة الوظائف -->
-                        <Border Grid.Column="2" Style="{StaticResource CardStyle}" Padding="16">
+                        <!-- 2. بطاقة الفئات -->
+                        <Border Grid.Column="2" Style="{StaticResource CardStyle}" Padding="14">
                             <Grid>
                                 <Grid.RowDefinitions>
                                     <RowDefinition Height="Auto"/>
@@ -73,65 +61,158 @@
                                     <RowDefinition Height="*"/>
                                 </Grid.RowDefinitions>
 
-                                <TextBlock Text="💼 المسميات الوظيفية" FontSize="15.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,10"/>
+                                <TextBlock Grid.Row="0" Text="🏷 2. الفئات" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,10"/>
 
-                                <Grid Grid.Row="1" Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="6"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="6"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox Grid.Column="0" x:Name="TxtJobTitle" Style="{StaticResource ModernTextBox}" ToolTip="اكتب اسم الوظيفة (مثل: معلم، مشرف)"/>
-                                    <Button Grid.Column="2" x:Name="BtnSaveJob" Content="حفظ" Style="{StaticResource PrimaryButton}" Height="38" Padding="14,0" Click="BtnSaveJob_Click"/>
-                                    <Button Grid.Column="4" x:Name="BtnDeleteJob" Content="حذف" Style="{StaticResource DangerButton}" Height="38" Padding="12,0" Click="BtnDeleteJob_Click"/>
-                                </Grid>
+                                <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="BtnCreateCategory" Content="+ إنشاء فئة" Style="{StaticResource PrimaryButton}" Height="34" Padding="12,0" FontSize="12.5" Margin="0,0,6,4" Click="BtnCreateCategory_Click"/>
+                                    <Button x:Name="BtnEditCategory" Content="✏ تعديل" Style="{StaticResource SecondaryButton}" Height="34" Padding="12,0" FontSize="12.5" Margin="0,0,6,4" Click="BtnEditCategory_Click"/>
+                                    <Button x:Name="BtnDeleteCategoryBasic" Content="🗑 حذف" Style="{StaticResource DangerButton}" Height="34" Padding="10,0" FontSize="12.5" Margin="0,0,0,4" Click="BtnDeleteCategoryBasic_Click"/>
+                                </WrapPanel>
 
-                                <DataGrid Grid.Row="2" x:Name="GridJobs" IsReadOnly="True" SelectionChanged="GridJobs_SelectionChanged">
+                                <DataGrid Grid.Row="2" x:Name="GridCategoriesHierarchy" IsReadOnly="True" SelectionMode="Single" MouseDoubleClick="GridCategoriesHierarchy_MouseDoubleClick">
                                     <DataGrid.Columns>
-                                        <DataGridTextColumn Header="اسم الوظيفة" Binding="{Binding JobTitle}" Width="*"/>
+                                        <DataGridTextColumn Header="اسم الفئة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                        <DataGridTextColumn Header="الوظائف" Binding="{Binding JobsCount}" Width="80"/>
                                         <DataGridTextColumn Header="الموظفون" Binding="{Binding EmployeesCount}" Width="80"/>
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                            </Grid>
-                        </Border>
-
-                        <!-- 3. بطاقة المقيمين -->
-                        <Border Grid.Column="4" Style="{StaticResource CardStyle}" Padding="16">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="Auto"/>
-                                    <RowDefinition Height="*"/>
-                                </Grid.RowDefinitions>
-
-                                <TextBlock Text="👤 أسماء المقيمين والمسؤولين" FontSize="15.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,10"/>
-
-                                <Grid Grid.Row="1" Margin="0,0,0,10">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="6"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="6"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <TextBox Grid.Column="0" x:Name="TxtEvaluatorName" Style="{StaticResource ModernTextBox}" ToolTip="اكتب اسم المقيم (المشرف أو الإداري)"/>
-                                    <Button Grid.Column="2" x:Name="BtnSaveEvaluator" Content="حفظ" Style="{StaticResource PrimaryButton}" Height="38" Padding="14,0" Click="BtnSaveEvaluator_Click"/>
-                                    <Button Grid.Column="4" x:Name="BtnDeleteEvaluator" Content="حذف" Style="{StaticResource DangerButton}" Height="38" Padding="12,0" Click="BtnDeleteEvaluator_Click"/>
-                                </Grid>
-
-                                <DataGrid Grid.Row="2" x:Name="GridEvaluators" IsReadOnly="True" SelectionChanged="GridEvaluators_SelectionChanged">
-                                    <DataGrid.Columns>
-                                        <DataGridTextColumn Header="اسم المقيم" Binding="{Binding EvaluatorName}" Width="*"/>
-                                        <DataGridTextColumn Header="الفئات المسندة" Binding="{Binding AssignedCategoriesCount}" Width="105"/>
                                     </DataGrid.Columns>
                                 </DataGrid>
                             </Grid>
                         </Border>
                     </Grid>
 
-                    <!-- الصف السفلي: بطاقة الفئات المرتبطة بالفرع والمقيمين (100 درجة) -->
+                    <!-- الصف السفلي: 3. الوظائف التابعة للفئات | 4. أنواع الوظائف التابعة للوظيفة -->
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="14"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- 3. بطاقة الوظائف التابعة للفئات -->
+                        <Border Grid.Column="0" Style="{StaticResource CardStyle}" Padding="14">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Text="💼 3. الوظائف التابعة للفئات (مثلاً: في فئة المعلمين توجد وظيفة معلم، مربية)" FontSize="14.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="BtnCreateJob" Content="+ إنشاء وظيفة" Style="{StaticResource PrimaryButton}" Height="35" Padding="14,0" FontSize="13" Margin="0,0,8,4" Click="BtnCreateJob_Click"/>
+                                    <Button x:Name="BtnEditJob" Content="✏ تعديل" Style="{StaticResource SecondaryButton}" Height="35" Padding="14,0" FontSize="13" Margin="0,0,8,4" Click="BtnEditJob_Click"/>
+                                    <Button x:Name="BtnDeleteJob" Content="🗑 حذف" Style="{StaticResource DangerButton}" Height="35" Padding="12,0" FontSize="13" Margin="0,0,0,4" Click="BtnDeleteJob_Click"/>
+                                </WrapPanel>
+
+                                <DataGrid Grid.Row="2" x:Name="GridJobs" IsReadOnly="True" SelectionMode="Single" MouseDoubleClick="GridJobs_MouseDoubleClick">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="اسم الوظيفة" Binding="{Binding JobTitle}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                        <DataGridTextColumn Header="الفئة التابعة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="125"/>
+                                        <DataGridTextColumn Header="أنواع الوظيفة" Binding="{Binding JobTypesCount}" Width="90"/>
+                                        <DataGridTextColumn Header="الموظفون" Binding="{Binding EmployeesCount}" Width="75"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                        </Border>
+
+                        <!-- 4. بطاقة أنواع الوظائف (إلزامي دائماً) -->
+                        <Border Grid.Column="2" Style="{StaticResource CardStyle}" Padding="14">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="*"/>
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Grid.Row="0" Text="🔖 4. نوع الوظيفة / التخصص (مثلاً: معلم لغة عربية، معلم لغة إنجليزية)" FontSize="14.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+                                <WrapPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button x:Name="BtnCreateJobType" Content="+ إنشاء نوع وظيفة" Style="{StaticResource PrimaryButton}" Height="35" Padding="14,0" FontSize="13" Margin="0,0,8,4" Click="BtnCreateJobType_Click"/>
+                                    <Button x:Name="BtnEditJobType" Content="✏ تعديل" Style="{StaticResource SecondaryButton}" Height="35" Padding="14,0" FontSize="13" Margin="0,0,8,4" Click="BtnEditJobType_Click"/>
+                                    <Button x:Name="BtnDeleteJobType" Content="🗑 حذف" Style="{StaticResource DangerButton}" Height="35" Padding="12,0" FontSize="13" Margin="0,0,0,4" Click="BtnDeleteJobType_Click"/>
+                                </WrapPanel>
+
+                                <DataGrid Grid.Row="2" x:Name="GridJobTypes" IsReadOnly="True" SelectionMode="Single" MouseDoubleClick="GridJobTypes_MouseDoubleClick">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="نوع الوظيفة (التخصص)" Binding="{Binding JobTypeName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                        <DataGridTextColumn Header="الوظيفة" Binding="{Binding JobTitle}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="110"/>
+                                        <DataGridTextColumn Header="الفئة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="105"/>
+                                        <DataGridTextColumn Header="الموظفون" Binding="{Binding EmployeesCount}" Width="75"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ========================================================================= -->
+            <!-- التبويب الثاني: مجموعات المقيمين + تخصيص المقيمين ودرجات التقييم للفئات     -->
+            <!-- ========================================================================= -->
+            <TabItem Header="  👥 2. المقيمون وتخصيص درجات التقييم للفئات (100 درجة)  " Padding="14,8" FontWeight="Bold">
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="1*"/>
+                        <RowDefinition Height="14"/>
+                        <RowDefinition Height="1.15*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- البطاقة العليا: مجموعات المقيمين والمسؤولين + استيراد Excel -->
+                    <Border Grid.Row="0" Style="{StaticResource CardStyle}" Padding="18">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0" Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <StackPanel Grid.Column="0">
+                                    <TextBlock Text="👥 أسماء ومجموعات المقيمين واستيراد بيانات المقيمين من Excel" FontSize="16.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                                    <TextBlock Text="يمكنك إنشاء المجموعات يدوياً أو استيراد المجموعات وأسماء المقيمين ودرجات الفئات مباشرةً من ملف Excel."
+                                               FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,14,0"/>
+                                </StackPanel>
+
+                                <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button x:Name="BtnCreateEvaluatorGroup" Content="+ إنشاء مقيمين"
+                                            Style="{StaticResource PrimaryButton}" Height="38" Margin="0,0,8,4"
+                                            Click="BtnCreateEvaluatorGroup_Click"/>
+
+                                    <Button x:Name="BtnEditEvaluatorGroup" Content="✏ تعديل المجموعة"
+                                            Style="{StaticResource SecondaryButton}" Height="38" Margin="0,0,8,4"
+                                            Click="BtnEditEvaluatorGroup_Click"/>
+
+                                    <Button x:Name="BtnDeleteEvaluatorGroup" Content="🗑 حذف"
+                                            Style="{StaticResource DangerButton}" Height="38" Padding="12,0" Margin="0,0,14,4"
+                                            Click="BtnDeleteEvaluatorGroup_Click"/>
+
+                                    <Button x:Name="BtnImportEvaluatorsExcel" Content="📥 استيراد المقيمين من Excel"
+                                            Style="{StaticResource SecondaryButton}" Height="38" Margin="0,0,8,4"
+                                            Click="BtnImportEvaluatorsExcel_Click"/>
+
+                                    <Button x:Name="BtnDownloadEvaluatorsTemplate" Content="📄 تحميل قالب المقيمين Excel"
+                                            Style="{StaticResource SecondaryButton}" Height="38" Margin="0,0,0,4"
+                                            Click="BtnDownloadEvaluatorsTemplate_Click"/>
+                                </WrapPanel>
+                            </Grid>
+
+                            <DataGrid Grid.Row="1" x:Name="GridEvaluatorGroups" IsReadOnly="True" SelectionMode="Single" MouseDoubleClick="GridEvaluatorGroups_MouseDoubleClick">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="اسم مجموعة المقيمين" Binding="{Binding GroupName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="210"/>
+                                    <DataGridTextColumn Header="نوع المسؤولية" Binding="{Binding GroupTypeDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="195"/>
+                                    <DataGridTextColumn Header="أسماء المقيمين داخل المجموعة" Binding="{Binding MembersSummary}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                    <DataGridTextColumn Header="الفئات المخصصة لها" Binding="{Binding AssignedCategoriesCount}" Width="130"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+
+                    <!-- البطاقة السفلى: تخصيص المقيمين ودرجات التقييم للفئات (100 درجة) -->
                     <Border Grid.Row="2" Style="{StaticResource CardStyle}" Padding="18">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -143,37 +224,25 @@
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="8"/>
-                                    <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Grid.Column="0">
-                                    <TextBlock Text="🏷️ الفئات وتوزيع درجات المقيمين (شرط المجموع = 100 درجة لكل فئة وفرع)" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
-                                    <TextBlock Text="اضغط على (+ إنشاء فئة جديدة) لتحديد اسم الفئة والفرع واختيار المقيمين عبر (CheckBox) وتوزيع الـ 100 درجة بينهم." FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,16,0"/>
+                                    <TextBlock Text="⚖ تخصيص المقيمين ودرجات التقييم للفئات (شرط المجموع = 100 درجة)" FontSize="16.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                                    <TextBlock Text="اضغط على زر (تخصيص المقيمين ودرجات التقييم للفئات) أو انقر مرتين على أي فئة لتحديد مجموعات المقيمين وتوزيع الـ 100 درجة عليها."
+                                               FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,14,0"/>
                                 </StackPanel>
 
-                                <Button Grid.Column="1" x:Name="BtnAddCategoryPopup" Content="+ إنشاء فئة جديدة (100 درجة)"
-                                        Style="{StaticResource PrimaryButton}" Height="38"
-                                        Click="BtnAddCategoryPopup_Click"/>
-
-                                <Button Grid.Column="3" x:Name="BtnEditCategoryPopup" Content="✏ تعديل الفئة وأوزانها"
-                                        Style="{StaticResource SecondaryButton}" Height="38"
-                                        Click="BtnEditCategoryPopup_Click"/>
-
-                                <Button Grid.Column="5" x:Name="BtnDeleteCategory" Content="🗑 حذف الفئة"
-                                        Style="{StaticResource DangerButton}" Height="38" Padding="14,0"
-                                        Click="BtnDeleteCategory_Click"/>
+                                <Button Grid.Column="1" x:Name="BtnAllocateCategoryWeights" Content="⚖ تخصيص المقيمين ودرجات التقييم للفئات"
+                                        Style="{StaticResource PrimaryButton}" Height="40" Padding="18,0"
+                                        Click="BtnAllocateCategoryWeights_Click"/>
                             </Grid>
 
-                            <DataGrid Grid.Row="1" x:Name="GridCategories" IsReadOnly="True" MouseDoubleClick="GridCategories_MouseDoubleClick">
+                            <DataGrid Grid.Row="1" x:Name="GridCategoriesWeights" IsReadOnly="True" SelectionMode="Single" MouseDoubleClick="GridCategoriesWeights_MouseDoubleClick">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="اسم الفئة" Binding="{Binding CategoryName}" Width="140"/>
-                                    <DataGridTextColumn Header="الفرع" Binding="{Binding BranchName}" Width="130"/>
-                                    <DataGridTextColumn Header="المقيمون المعتمدون وتوزيع الدرجات (من 100)" Binding="{Binding EvaluatorsSummary}" Width="*"/>
-                                    <DataGridTextColumn Header="مجموع الأوزان" Binding="{Binding TotalWeights}" Width="100"/>
-                                    <DataGridTextColumn Header="عدد الموظفين" Binding="{Binding EmployeesCount}" Width="100"/>
+                                    <DataGridTextColumn Header="الفئة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="155"/>
+                                    <DataGridTextColumn Header="مجموعات المقيمين وتوزيع الدرجات (من 100)" Binding="{Binding EvaluatorsSummary}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                    <DataGridTextColumn Header="حالة الـ 100 درجة" Binding="{Binding WeightsStatusDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="155"/>
+                                    <DataGridTextColumn Header="عدد الموظفين" Binding="{Binding EmployeesCount}" Width="95"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
@@ -182,9 +251,9 @@
             </TabItem>
 
             <!-- ========================================================================= -->
-            <!-- التبويب الثاني: سجل الموظفين الشامل (الاسم في النظام + التقييمي + Excel)   -->
+            <!-- التبويب الثالث: سجل الموظفين الشامل واستيراد وتصدير Excel                  -->
             <!-- ========================================================================= -->
-            <TabItem Header="  👨‍🏫 2. سجل الموظفين واستيراد ملفات Excel (الاسم في النظام والاسم التقييمي)  " Padding="14,8" FontWeight="Bold">
+            <TabItem Header="  👨‍🏫 3. سجل الموظفين واستيراد ملفات Excel  " Padding="14,8" FontWeight="Bold">
                 <Border Style="{StaticResource CardStyle}" Margin="0,12,0,0" Padding="18">
                     <Grid>
                         <Grid.RowDefinitions>
@@ -198,79 +267,94 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="16"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="8"/>
-                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
 
-                            <StackPanel Grid.Column="0">
-                                <TextBlock Text="إدارة الموظفين وربطهم بالفروع والفئات والمقيمين" FontSize="17" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
-                                <TextBlock Text="يمكنك إضافة الموظفين يدوياً عبر النافذة المنبثقة أو استيرادهم دفعة واحدة من ملف Excel." FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,16,0"/>
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="إدارة الموظفين واستيراد الموظفين والمقيمين بنظام المصفوفة (1 / 0)" FontSize="17" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                                <TextBlock Text="يدعم استيراد Excel ترتيب المجموعات في الصف 1 وأسماء المقيمين في الصف 2 وأرقام (1 = ينتمي، 0 = لا ينتمي) أمام كل موظف."
+                                           FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,12,0"/>
                             </StackPanel>
 
-                            <Button Grid.Column="1" x:Name="BtnAddEmployeePopup" Content="+ إضافة موظف جديد"
-                                    Style="{StaticResource PrimaryButton}" Height="38"
-                                    Click="BtnAddEmployeePopup_Click"/>
+                            <WrapPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="BtnAddEmployeePopup" Content="+ إضافة موظف جديد"
+                                        Style="{StaticResource PrimaryButton}" Height="38" Margin="0,0,8,4"
+                                        Click="BtnAddEmployeePopup_Click"/>
 
-                            <Button Grid.Column="3" x:Name="BtnEditEmployeePopup" Content="✏ تعديل الموظف"
-                                    Style="{StaticResource SecondaryButton}" Height="38"
-                                    Click="BtnEditEmployeePopup_Click"/>
+                                <Button x:Name="BtnEditEmployeePopup" Content="✏ تعديل الموظف"
+                                        Style="{StaticResource SecondaryButton}" Height="38" Margin="0,0,8,4"
+                                        Click="BtnEditEmployeePopup_Click"/>
 
-                            <Button Grid.Column="5" x:Name="BtnDeleteEmployee" Content="🗑 حذف"
-                                    Style="{StaticResource DangerButton}" Height="38" Padding="14,0"
-                                    Click="BtnDeleteEmployee_Click"/>
+                                <Button x:Name="BtnDeleteEmployee" Content="🗑 حذف"
+                                        Style="{StaticResource DangerButton}" Height="38" Padding="14,0" Margin="0,0,14,4"
+                                        Click="BtnDeleteEmployee_Click"/>
 
-                            <Button Grid.Column="7" x:Name="BtnImportExcel" Content="📥 استيراد من Excel"
-                                    Style="{StaticResource SecondaryButton}" Height="38"
-                                    Click="BtnImportExcel_Click"/>
+                                <Button x:Name="BtnImportExcel" Content="📥 استيراد من Excel"
+                                        Style="{StaticResource SecondaryButton}" Height="38" Margin="0,0,8,4"
+                                        Click="BtnImportExcel_Click"/>
 
-                            <Button Grid.Column="9" x:Name="BtnDownloadExcelTemplate" Content="📄 تحميل قالب Excel فارغ"
-                                    Style="{StaticResource SecondaryButton}" Height="38"
-                                    Click="BtnDownloadExcelTemplate_Click"/>
+                                <Button x:Name="BtnDownloadExcelTemplate" Content="📄 تحميل قالب Excel فارغ"
+                                        Style="{StaticResource SecondaryButton}" Height="38" Margin="0,0,0,4"
+                                        Click="BtnDownloadExcelTemplate_Click"/>
+                            </WrapPanel>
                         </Grid>
 
-                        <!-- شريط البحث والفلترة -->
+                        <!-- شريط البحث والفلترة المتقدمة -->
                         <Border Grid.Row="1" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,12">
                             <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="1.5*"/>
-                                    <ColumnDefinition Width="14"/>
+                                    <ColumnDefinition Width="1.4*"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="0.9*"/>
+                                    <ColumnDefinition Width="10"/>
+                                    <ColumnDefinition Width="0.9*"/>
+                                    <ColumnDefinition Width="10"/>
                                     <ColumnDefinition Width="1*"/>
-                                    <ColumnDefinition Width="12"/>
+                                    <ColumnDefinition Width="10"/>
                                     <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="16"/>
+                                    <ColumnDefinition Width="14"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
 
                                 <TextBox Grid.Column="0" x:Name="TxtSearchEmployee" Style="{StaticResource ModernTextBox}"
-                                         ToolTip="ابحث بالاسم التقييمي أو الاسم في النظام أو الوظيفة..."
+                                         ToolTip="ابحث بالاسم التقييمي أو الاسم في النظام أو الوظيفة أو التخصص..."
                                          TextChanged="TxtSearchEmployee_TextChanged"/>
 
                                 <ComboBox Grid.Column="2" x:Name="CmbFilterBranch" Style="{StaticResource ModernComboBox}"
                                           DisplayMemberPath="BranchName" SelectedValuePath="BranchID"
-                                          SelectionChanged="CmbFilterBranch_SelectionChanged"/>
+                                          ToolTip="تصفية حسب الفرع"
+                                          SelectionChanged="EmployeeFilterCombo_SelectionChanged"/>
 
-                                <Button Grid.Column="4" Content="عرض الكل" Style="{StaticResource SecondaryButton}" Height="38" Click="BtnResetEmployeeFilters_Click"/>
+                                <ComboBox Grid.Column="4" x:Name="CmbFilterCategory" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="CategoryName" SelectedValuePath="CategoryID"
+                                          ToolTip="تصفية حسب الفئة"
+                                          SelectionChanged="EmployeeFilterCombo_SelectionChanged"/>
 
-                                <TextBlock Grid.Column="6" x:Name="TxtEmployeesCountBadge" Text="إجمالي الموظفين: 0" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" VerticalAlignment="Center"/>
+                                <ComboBox Grid.Column="6" x:Name="CmbFilterStatus" Style="{StaticResource ModernComboBox}"
+                                          SelectionChanged="EmployeeFilterCombo_SelectionChanged">
+                                    <ComboBoxItem Content="جميع حالات الموظفين" Tag="ALL" IsSelected="True"/>
+                                    <ComboBoxItem Content="مستمر وبحافز ✔" Tag="CONT_INC"/>
+                                    <ComboBoxItem Content="مستمر وبدون حافز (أداء)" Tag="CONT_NO_INC"/>
+                                    <ComboBoxItem Content="منقطع 🔴" Tag="DISCONT"/>
+                                </ComboBox>
+
+                                <Button Grid.Column="8" Content="عرض الكل" Style="{StaticResource SecondaryButton}" Height="38" Click="BtnResetEmployeeFilters_Click"/>
+
+                                <TextBlock Grid.Column="10" x:Name="TxtEmployeesCountBadge" Text="إجمالي الموظفين: 0" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" VerticalAlignment="Center"/>
                             </Grid>
                         </Border>
 
-                        <!-- جدول الموظفين الشامل مع المقيمين ومؤشر اكتمال النصاب -->
+                        <!-- جدول الموظفين الشامل -->
                         <DataGrid Grid.Row="2" x:Name="GridEmployees" IsReadOnly="True" MouseDoubleClick="GridEmployees_MouseDoubleClick">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="الاسم التقييمي (لأوراق التقييم)" Binding="{Binding EvaluationName}" Width="175"/>
-                                <DataGridTextColumn Header="الاسم في النظام (للقيد المحاسبي)" Binding="{Binding SystemName}" Width="230"/>
-                                <DataGridTextColumn Header="الفرع" Binding="{Binding BranchName}" Width="105"/>
-                                <DataGridTextColumn Header="الوظيفة" Binding="{Binding JobTitle}" Width="105"/>
-                                <DataGridTextColumn Header="الفئة" Binding="{Binding CategoryName}" Width="105"/>
-                                <DataGridTextColumn Header="المقيمون التلقائيون للفئة (100 درجة)" Binding="{Binding AssignedEvaluatorsSummary}" Width="*"/>
-                                <DataGridTextColumn Header="حالة الإدراج في قوالب التقييم" Binding="{Binding TemplateCoverageStatus}" Width="210"/>
+                                <DataGridTextColumn Header="الاسم التقييمي" Binding="{Binding EvaluationName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="165"/>
+                                <DataGridTextColumn Header="الاسم في النظام" Binding="{Binding SystemName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="195"/>
+                                <DataGridTextColumn Header="الفرع" Binding="{Binding BranchName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="85"/>
+                                <DataGridTextColumn Header="الفئة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="95"/>
+                                <DataGridTextColumn Header="الوظيفة ونوعها" Binding="{Binding FullJobDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="150"/>
+                                <DataGridTextColumn Header="الحافز" Binding="{Binding IncentiveStatusDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="85"/>
+                                <DataGridTextColumn Header="الدوام" Binding="{Binding ContinuingStatusDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="80"/>
+                                <DataGridTextColumn Header="المقيمون المسؤولون وحصصهم" Binding="{Binding AssignedEvaluatorsSummary}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                <DataGridTextColumn Header="حالة الإدراج بالقوالب" Binding="{Binding TemplateCoverageStatus}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="165"/>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>
@@ -279,4 +363,3 @@
         </TabControl>
     </Grid>
 </UserControl>
-

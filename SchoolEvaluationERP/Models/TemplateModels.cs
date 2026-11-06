@@ -1,5 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
@@ -7,12 +6,32 @@ using System.Runtime.CompilerServices;
 
 namespace SchoolEvaluationERP.Models
 {
+    public class TemplateCategoryOptionDto
+    {
+        public int CategoryID { get; set; }
+        public string CategoryName { get; set; } = string.Empty;
+        public string DepartmentName { get; set; } = string.Empty;
+        public int AssignedEmployeesCount { get; set; }
+
+        public string DropdownDisplay => $"{CategoryName} [{AssignedEmployeesCount} موظف مسند]";
+    }
+
+    public class TemplateBranchOptionDto
+    {
+        public int? BranchID { get; set; } // null = جميع الفروع (كلاهما)
+        public string BranchName { get; set; } = string.Empty;
+        public int AssignedEmployeesCount { get; set; }
+
+        public string DropdownDisplay => $"{BranchName} ({AssignedEmployeesCount} موظف)";
+    }
+
     public class TemplateSummaryDto
     {
         public int TemplateID { get; set; }
         public Guid TemplateGroupGuid { get; set; }
         public int EvaluatorID { get; set; }
         public string EvaluatorName { get; set; } = string.Empty;
+        public string GroupName { get; set; } = string.Empty;
         public int VersionNumber { get; set; }
         public DateTime CreatedAt { get; set; }
         public int SheetsCount { get; set; }
@@ -20,10 +39,13 @@ namespace SchoolEvaluationERP.Models
         public int LinkedEvaluationsCount { get; set; }
         public string SheetsSummary { get; set; } = string.Empty;
 
+        public string EvaluatorWithGroupDisplay => string.IsNullOrWhiteSpace(GroupName)
+            ? EvaluatorName
+            : $"{EvaluatorName} ({GroupName})";
         public string VersionDisplay => $"النسخة v{VersionNumber}";
         public string CreatedAtDisplay => CreatedAt.ToString("yyyy-MM-dd");
         public string StatusDisplay => LinkedEvaluationsCount > 0
-            ? $"مرتبط بـ ({LinkedEvaluationsCount}) تقييم (التعديل ينشئ نسخة جديدة)"
+            ? $"مرتبط بـ ({LinkedEvaluationsCount}) تقييم شهري (التعديل ينشئ نسخة جديدة)"
             : "جاهز للتعديل المباشر";
     }
 
@@ -54,9 +76,10 @@ namespace SchoolEvaluationERP.Models
             get => _maxScore;
             set
             {
-                if (_maxScore != value)
+                decimal clean = value < 0m ? 0m : Math.Round(value, 0, MidpointRounding.AwayFromZero);
+                if (_maxScore != clean)
                 {
-                    _maxScore = value < 0m ? 0m : value;
+                    _maxScore = clean;
                     OnPropertyChanged();
                     OnPropertyChanged(nameof(HeaderDisplay));
                 }
@@ -76,7 +99,7 @@ namespace SchoolEvaluationERP.Models
             }
         }
 
-        public string HeaderDisplay => $"{CriteriaTitle}\n({MaxScore:0.##} درجة)";
+        public string HeaderDisplay => $"{CriteriaTitle}\n({MaxScore:0} درجة)";
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
@@ -90,10 +113,20 @@ namespace SchoolEvaluationERP.Models
         public int EmployeeID { get; set; }
         public string EvaluationName { get; set; } = string.Empty;
         public string SystemName { get; set; } = string.Empty;
+        public int BranchID { get; set; }
         public string BranchName { get; set; } = string.Empty;
         public string JobTitle { get; set; } = string.Empty;
+        public string JobTypeName { get; set; } = string.Empty;
         public string CategoryName { get; set; } = string.Empty;
+        public bool HasIncentive { get; set; } = true;
+        public bool IsContinuing { get; set; } = true;
         public decimal EvaluatorWeightForEmployee { get; set; }
+
+        public string FullJobDisplay => string.IsNullOrWhiteSpace(JobTypeName)
+            ? JobTitle
+            : $"{JobTitle} - {JobTypeName}";
+
+        public string IncentiveBadgeDisplay => HasIncentive ? "بحافز" : "بدون حافز";
 
         public int RowOrder
         {
@@ -110,7 +143,7 @@ namespace SchoolEvaluationERP.Models
 
         public string WeightBadgeDisplay => EvaluatorWeightForEmployee > 0
             ? $"{EvaluatorWeightForEmployee:0.##} درجة"
-            : "غير مسند بفرعه";
+            : "غير مسند";
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
@@ -120,7 +153,10 @@ namespace SchoolEvaluationERP.Models
     public class TemplateSheetModel : INotifyPropertyChanged
     {
         private string _sheetName = "ورقة تقييم 1";
+        private int? _targetCategoryId;
         private string _targetCategoryName = string.Empty;
+        private int? _targetBranchId;
+        private string _targetBranchName = "جميع الفروع (كلاهما)";
         private int _sortOrder = 1;
 
         public int SheetID { get; set; }
@@ -139,6 +175,19 @@ namespace SchoolEvaluationERP.Models
             }
         }
 
+        public int? TargetCategoryID
+        {
+            get => _targetCategoryId;
+            set
+            {
+                if (_targetCategoryId != value)
+                {
+                    _targetCategoryId = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
         public string TargetCategoryName
         {
             get => _targetCategoryName;
@@ -146,8 +195,44 @@ namespace SchoolEvaluationERP.Models
             {
                 if (_targetCategoryName != value)
                 {
-                    _targetCategoryName = value.Trim();
+                    _targetCategoryName = (value ?? string.Empty).Trim();
                     OnPropertyChanged();
+                    OnPropertyChanged(nameof(CategoryWithBranchDisplay));
+                    OnPropertyChanged(nameof(TabHeaderDisplay));
+                }
+            }
+        }
+
+        /// <summary>
+        /// null يعني جميع الفروع (كلاهما)، وأي رقم أكبر من 0 يعني فرعاً محدداً.
+        /// </summary>
+        public int? TargetBranchID
+        {
+            get => _targetBranchId;
+            set
+            {
+                int? normalized = (value.HasValue && value.Value > 0) ? value.Value : null;
+                if (_targetBranchId != normalized)
+                {
+                    _targetBranchId = normalized;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(CategoryWithBranchDisplay));
+                    OnPropertyChanged(nameof(TabHeaderDisplay));
+                }
+            }
+        }
+
+        public string TargetBranchName
+        {
+            get => _targetBranchName;
+            set
+            {
+                string clean = string.IsNullOrWhiteSpace(value) ? "جميع الفروع (كلاهما)" : value.Trim();
+                if (_targetBranchName != clean)
+                {
+                    _targetBranchName = clean;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(CategoryWithBranchDisplay));
                     OnPropertyChanged(nameof(TabHeaderDisplay));
                 }
             }
@@ -171,18 +256,42 @@ namespace SchoolEvaluationERP.Models
 
         public decimal TotalCriteriaScore => CriteriaColumns.Sum(c => c.MaxScore);
         public bool IsCriteriaTotalValid => TotalCriteriaScore == 100m;
-        public string TabHeaderDisplay => $"{SheetName} ({TargetCategoryName})";
 
-        public static TemplateSheetModel CreateDefault(string sheetName, string categoryName, int sortOrder)
+        public string CategoryWithBranchDisplay
+        {
+            get
+            {
+                string branchPart = TargetBranchID.HasValue && TargetBranchID.Value > 0
+                    ? TargetBranchName
+                    : "جميع الفروع";
+                if (string.IsNullOrWhiteSpace(TargetCategoryName))
+                    return branchPart;
+                return TargetCategoryName.Contains(" - ")
+                    ? TargetCategoryName
+                    : $"{TargetCategoryName} - {branchPart}";
+            }
+        }
+
+        public string TabHeaderDisplay => $"{SheetName} ({CategoryWithBranchDisplay})";
+
+        public static TemplateSheetModel CreateDefault(
+            string sheetName,
+            int categoryId,
+            string categoryName,
+            int? branchId,
+            string branchName,
+            int sortOrder)
         {
             var sheet = new TemplateSheetModel
             {
                 SheetName = sheetName,
+                TargetCategoryID = categoryId,
                 TargetCategoryName = categoryName,
+                TargetBranchID = (branchId.HasValue && branchId.Value > 0) ? branchId.Value : null,
+                TargetBranchName = string.IsNullOrWhiteSpace(branchName) ? "جميع الفروع (كلاهما)" : branchName,
                 SortOrder = sortOrder
             };
 
-            // 3 أعمدة افتراضية باسم افتراضي "قواعد التقييم" ودرجة 0 كما طلب المستخدم
             sheet.CriteriaColumns.Add(new CriteriaColumnModel { CriteriaTitle = "قواعد التقييم 1", MaxScore = 0m, ColumnOrder = 1 });
             sheet.CriteriaColumns.Add(new CriteriaColumnModel { CriteriaTitle = "قواعد التقييم 2", MaxScore = 0m, ColumnOrder = 2 });
             sheet.CriteriaColumns.Add(new CriteriaColumnModel { CriteriaTitle = "قواعد التقييم 3", MaxScore = 0m, ColumnOrder = 3 });
@@ -204,6 +313,7 @@ namespace SchoolEvaluationERP.Models
         {
             OnPropertyChanged(nameof(TotalCriteriaScore));
             OnPropertyChanged(nameof(IsCriteriaTotalValid));
+            OnPropertyChanged(nameof(CategoryWithBranchDisplay));
             OnPropertyChanged(nameof(TabHeaderDisplay));
         }
 
@@ -217,6 +327,7 @@ namespace SchoolEvaluationERP.Models
         public Guid TemplateGroupGuid { get; set; } = Guid.NewGuid();
         public int EvaluatorID { get; set; }
         public string EvaluatorName { get; set; } = string.Empty;
+        public string GroupName { get; set; } = string.Empty;
         public int VersionNumber { get; set; } = 1;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public ObservableCollection<TemplateSheetModel> Sheets { get; set; } = new();

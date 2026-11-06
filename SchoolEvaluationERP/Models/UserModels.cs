@@ -41,7 +41,6 @@ namespace SchoolEvaluationERP.Models
                 {
                     _canRead = value;
                     OnPropertyChanged();
-                    // إذا ألغى المدير صلاحية القراءة، يجب إلغاء الكتابة والتعديل والحذف تلقائياً
                     if (!_canRead)
                     {
                         CanInsert = false;
@@ -98,9 +97,9 @@ namespace SchoolEvaluationERP.Models
         {
             return new List<PermissionRowViewModel>
             {
-                new() { ModuleCode = "MasterData", ModuleArabicName = "1. صفحة الأساسيات (الفروع، الفئات، الموظفين)", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "Templates", ModuleArabicName = "2. إنشاء وتجهيز قوالب التقييم (A4)", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "ScoreEntry", ModuleArabicName = "3. إدخال التقييمات الأسبوعية", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "MasterData", ModuleArabicName = "1. صفحة الأساسيات والهيكل التنظيمي", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "Templates", ModuleArabicName = "2. إنشاء وتجهيز قوالب التقييم (A4 / Excel)", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "ScoreEntry", ModuleArabicName = "3. إدخال التقييمات الشهرية", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
                 new() { ModuleCode = "HistoryLog", ModuleArabicName = "4. سجل التقييمات والأرشيف", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
                 new() { ModuleCode = "FinalReport", ModuleArabicName = "5. التقرير النهائي وصرف الحوافز", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
                 new() { ModuleCode = "UserManagement", ModuleArabicName = "6. إدارة المستخدمين والصلاحيات", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll }

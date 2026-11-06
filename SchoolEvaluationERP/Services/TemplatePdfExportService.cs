@@ -1,5 +1,4 @@
-﻿using System;
-using System.Linq;
+using System;
 using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
@@ -26,14 +25,15 @@ namespace SchoolEvaluationERP.Services
                     {
                         row.RelativeItem().Column(col =>
                         {
-                            col.Item().Text("استمارة التقييم الأسبوعي للموظفين").FontSize(15).Bold().FontColor(Colors.Blue.Darken4);
-                            col.Item().PaddingTop(2).Text($"اسم المُقيّم المسؤول: {template.EvaluatorName}   |   رقم القالب: #{template.TemplateID} (v{template.VersionNumber})").FontSize(11).SemiBold();
+                            col.Item().Text("استمارة التقييم الشهري للموظفين").FontSize(15).Bold().FontColor(Colors.Blue.Darken4);
+                            string groupSuffix = string.IsNullOrWhiteSpace(template.GroupName) ? "" : $" ({template.GroupName})";
+                            col.Item().PaddingTop(2).Text($"اسم المُقيّم المسؤول: {template.EvaluatorName}{groupSuffix}   |   رقم القالب: #{template.TemplateID} (v{template.VersionNumber})").FontSize(11).SemiBold();
                         });
 
                         row.ConstantItem(195).AlignLeft().Column(col =>
                         {
                             col.Item().Text($"تاريخ الطباعة: {DateTime.Now:yyyy-MM-dd}").FontSize(9.5f);
-                            col.Item().PaddingTop(3).Text("الشهر: .......................   الأسبوع: ( 1 / 2 / 3 / 4 )").FontSize(9.5f).SemiBold();
+                            col.Item().PaddingTop(3).Text("الشهر: .......................   السنة: 2026 م").FontSize(9.5f).SemiBold();
                         });
                     });
 
@@ -44,7 +44,6 @@ namespace SchoolEvaluationERP.Services
                             var sheet = template.Sheets[i];
                             bool isFirstSheet = (i == 0);
 
-                            // ShowEntire يفحص هل توجد مساحة كافية في نفس ورقة A4 لطباعة الورقة التالية تحتها مباشرة
                             mainCol.Item()
                                    .PaddingTop(isFirstSheet ? 2 : 14)
                                    .ShowEntire()
@@ -55,10 +54,10 @@ namespace SchoolEvaluationERP.Services
                                    {
                                        sheetCol.Item().Background(Colors.Grey.Lighten3).PaddingVertical(5).PaddingHorizontal(8).Row(r =>
                                        {
-                                           r.RelativeItem().Text($"ورقة التقييم ({i + 1}): {sheet.SheetName}   —   الفئة: {sheet.TargetCategoryName}")
+                                           r.RelativeItem().Text($"ورقة التقييم ({i + 1}): {sheet.SheetName}   —   الفئة والفرع: {sheet.CategoryWithBranchDisplay}")
                                             .FontSize(11.5f).Bold().FontColor(Colors.Black);
 
-                                           r.ConstantItem(170).AlignLeft().Text($"مجموع درجات المبادئ: {sheet.TotalCriteriaScore:0.##} من 100")
+                                           r.ConstantItem(170).AlignLeft().Text($"مجموع درجات المبادئ: {sheet.TotalCriteriaScore:0} من 100")
                                             .FontSize(10).SemiBold().FontColor(Colors.Blue.Darken3);
                                        });
 
@@ -68,14 +67,15 @@ namespace SchoolEvaluationERP.Services
 
                                            table.ColumnsDefinition(cols =>
                                            {
-                                               cols.ConstantColumn(28);
-                                               cols.RelativeColumn(2.4f);
-                                               cols.ConstantColumn(65);
+                                               cols.ConstantColumn(26);
+                                               cols.RelativeColumn(2.2f);
+                                               cols.ConstantColumn(60);
+                                               cols.RelativeColumn(1.3f);
                                                foreach (var _ in sheet.CriteriaColumns)
                                                {
-                                                   cols.RelativeColumn(1.25f);
+                                                   cols.RelativeColumn(1.15f);
                                                }
-                                               cols.ConstantColumn(55);
+                                               cols.ConstantColumn(52);
                                            });
 
                                            table.Header(header =>
@@ -83,13 +83,14 @@ namespace SchoolEvaluationERP.Services
                                                header.Cell().Element(HeaderCellStyle).Text("م");
                                                header.Cell().Element(HeaderCellStyle).Text("الاسم التقييمي للموظف");
                                                header.Cell().Element(HeaderCellStyle).Text("الفرع");
+                                               header.Cell().Element(HeaderCellStyle).Text("الوظيفة");
 
                                                foreach (var crit in sheet.CriteriaColumns)
                                                {
                                                    header.Cell().Element(HeaderCellStyle).Column(c =>
                                                    {
                                                        c.Item().AlignCenter().Text(crit.CriteriaTitle).FontSize(9.5f).Bold();
-                                                       c.Item().AlignCenter().Text($"(الدرجة: {crit.MaxScore:0.##})").FontSize(8.5f).FontColor(Colors.Blue.Darken3);
+                                                       c.Item().AlignCenter().Text($"(الدرجة: {crit.MaxScore:0})").FontSize(8.5f).FontColor(Colors.Blue.Darken3);
                                                    });
                                                }
 
@@ -118,7 +119,7 @@ namespace SchoolEvaluationERP.Services
 
                     page.Footer().PaddingTop(4).BorderTop(0.5f).BorderColor(Colors.Grey.Lighten1).Row(row =>
                     {
-                        row.RelativeItem().Text("نظام تقييم موظفي المدارس واحتساب الحوافز — يعبأ ورقياً من قبل المقيم ويعاد للإدارة").FontSize(8.5f).FontColor(Colors.Grey.Darken2);
+                        row.RelativeItem().Text("نظام تقييم موظفي المدارس واحتساب الحوافز الشهرية — يعبأ ورقياً من قبل المقيم ويعاد للإدارة").FontSize(8.5f).FontColor(Colors.Grey.Darken2);
                         row.ConstantItem(100).AlignLeft().Text(txt =>
                         {
                             txt.Span("صفحة ").FontSize(8.5f);
@@ -136,6 +137,7 @@ namespace SchoolEvaluationERP.Services
             table.Cell().Element(BodyCellStyle).AlignCenter().Text(index.ToString());
             table.Cell().Element(BodyCellStyle).Text(emp.EvaluationName).SemiBold();
             table.Cell().Element(BodyCellStyle).AlignCenter().Text(emp.BranchName).FontSize(9);
+            table.Cell().Element(BodyCellStyle).AlignCenter().Text(emp.FullJobDisplay).FontSize(8.5f);
 
             for (int c = 0; c < criteriaCount; c++)
             {

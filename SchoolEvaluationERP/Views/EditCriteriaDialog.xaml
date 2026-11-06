@@ -1,8 +1,8 @@
-﻿<Window x:Class="SchoolEvaluationERP.Views.EditCriteriaDialog"
+<Window x:Class="SchoolEvaluationERP.Views.EditCriteriaDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="تخصيص مبدأ التقييم ودرجته"
-        Width="440" SizeToContent="Height"
+        Title="تخصيص مبدأ التقييم ودرجته الصحيحة"
+        Width="450" SizeToContent="Height"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize"
         Background="{StaticResource AppBgBrush}"
@@ -13,7 +13,7 @@
         <Border Style="{StaticResource CardStyle}" Padding="22">
             <StackPanel>
                 <TextBlock Text="تعديل قاعدة / مبدأ التقييم" FontSize="17.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
-                <TextBlock x:Name="TxtRemainingHint" Text="أدخل اسم مبدأ التقييم (مثل: الحضور والانضباط، إتقان العمل) وحدد درجته القصوى بحيث يصبح مجموع الورقة = 100 درجة."
+                <TextBlock x:Name="TxtRemainingHint" Text="أدخل اسم مبدأ التقييم وحدد درجته القصوى (عدد صحيح بدون كسور) بحيث يصبح مجموع الورقة = 100 درجة."
                            FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,16"/>
 
                 <TextBlock Text="تسمية مبدأ التقييم:" FontWeight="SemiBold" Margin="0,0,0,6"/>
@@ -24,7 +24,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock Text="درجة التقييم لهذا المبدأ (من 100):" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <TextBlock Text="درجة التقييم لهذا المبدأ (عدد صحيح من 100):" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     <Button Grid.Column="1" x:Name="BtnUseRemaining" Content="وضع المتبقي للـ 100" Style="{StaticResource SecondaryButton}" Height="26" Padding="8,0" FontSize="11.5" Click="BtnUseRemaining_Click"/>
                 </Grid>
                 <TextBox x:Name="TxtMaxScore" Style="{StaticResource ModernTextBox}" Margin="0,0,0,18"/>

@@ -1,0 +1,71 @@
+<Window x:Class="SchoolEvaluationERP.Views.HierarchyItemDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="بيانات العنصر"
+        Width="440"
+        SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppBgBrush}"
+        FlowDirection="RightToLeft"
+        FontFamily="Segoe UI">
+
+    <Grid Margin="14">
+        <Border Style="{StaticResource CardStyle}" Padding="20">
+            <StackPanel>
+                <TextBlock x:Name="TxtHeaderTitle"
+                           Text="إنشاء عنصر جديد"
+                           FontSize="17"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextPrimaryBrush}"
+                           Margin="0,0,0,14"/>
+
+                <!-- قائمة اختيار الأب (تظهر في تعديل الوظيفة / تعديل نوع الوظيفة) -->
+                <StackPanel x:Name="PanelParentSelector" Visibility="Collapsed" Margin="0,0,0,12">
+                    <TextBlock x:Name="TxtParentLabel"
+                               Text="تحديد الفئة:"
+                               FontWeight="SemiBold"
+                               FontSize="13"
+                               Margin="0,0,0,5"/>
+                    <ComboBox x:Name="CmbParent"
+                              Style="{StaticResource ModernComboBox}"/>
+                </StackPanel>
+
+                <!-- حقل الاسم الأساسي -->
+                <StackPanel Margin="0,0,0,14">
+                    <TextBlock x:Name="TxtNameLabel"
+                               Text="الاسم:"
+                               FontWeight="SemiBold"
+                               FontSize="13"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="TxtItemName"
+                             Style="{StaticResource ModernTextBox}"/>
+                </StackPanel>
+
+                <!-- أزرار الحفظ والإلغاء -->
+                <Grid Margin="0,6,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="10"/>
+                        <ColumnDefinition Width="110"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0"
+                            x:Name="BtnSave"
+                            Content="💾 حفظ"
+                            Style="{StaticResource PrimaryButton}"
+                            Height="40"
+                            IsDefault="True"
+                            Click="BtnSave_Click"/>
+
+                    <Button Grid.Column="2"
+                            Content="إلغاء"
+                            Style="{StaticResource SecondaryButton}"
+                            Height="40"
+                            IsCancel="True"
+                            Click="BtnCancel_Click"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

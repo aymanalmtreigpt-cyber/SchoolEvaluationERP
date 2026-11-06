@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace SchoolEvaluationERP.Models
 {
@@ -11,16 +12,15 @@ namespace SchoolEvaluationERP.Models
         public string EvaluationName { get; set; } = string.Empty;
         public int BranchID { get; set; }
         public string BranchName { get; set; } = string.Empty;
-        public string JobTitle { get; set; } = string.Empty;
+        public int DepartmentID { get; set; }
+        public string DepartmentName { get; set; } = string.Empty;
         public int CategoryID { get; set; }
         public string CategoryName { get; set; } = string.Empty;
+        public string JobTitle { get; set; } = string.Empty;
+        public string JobTypeName { get; set; } = string.Empty;
+        public bool HasIncentive { get; set; } = true;
+        public bool IsContinuing { get; set; } = true;
 
-        public decimal? Week1Score { get; set; }
-        public decimal? Week2Score { get; set; }
-        public decimal? Week3Score { get; set; }
-        public decimal? Week4Score { get; set; }
-
-        public int ActualWeeksCount { get; set; }
         public string EvaluatorsBreakdownSummary { get; set; } = string.Empty;
         public bool IsAllEvaluatorsCompleted { get; set; }
 
@@ -33,12 +33,14 @@ namespace SchoolEvaluationERP.Models
         public string StatementText { get; set; } = string.Empty;
         public string EntryDateFormatted { get; set; } = string.Empty;
 
-        public string Week1Display => Week1Score.HasValue ? $"{Week1Score.Value:0.##}" : "—";
-        public string Week2Display => Week2Score.HasValue ? $"{Week2Score.Value:0.##}" : "—";
-        public string Week3Display => Week3Score.HasValue ? $"{Week3Score.Value:0.##}" : "—";
-        public string Week4Display => Week4Score.HasValue ? $"{Week4Score.Value:0.##}" : "—";
+        public string FullJobDisplay => string.IsNullOrWhiteSpace(JobTypeName)
+            ? JobTitle
+            : $"{JobTitle} ({JobTypeName})";
+
+        public string HasIncentiveDisplay => HasIncentive ? "بحافز ✔" : "بدون حافز (أداء فقط)";
+        public string CompletionStatusDisplay => IsAllEvaluatorsCompleted ? "مكتمل ✔" : "غير مكتمل ⚠";
         public string MonthlyAverageDisplay => $"{MonthlyEvaluationAverage:0.##}%";
-        public string IncentivePercentDisplay => $"{DisplayedIncentivePercent}%";
+        public string IncentivePercentDisplay => HasIncentive ? $"{DisplayedIncentivePercent}%" : "بدون حافز";
         public string FinalAmountDisplay => $"{FinalIncentiveAmount:N0}";
     }
 
@@ -55,7 +57,7 @@ namespace SchoolEvaluationERP.Models
 
         public int TotalEmployeesCount => Rows.Count;
         public int DeservingEmployeesCount => Rows.FindAll(r => r.FinalIncentiveAmount > 0m).Count;
-        public decimal TotalIncentivePayout => Rows.Count == 0 ? 0m : System.Linq.Enumerable.Sum(Rows, r => r.FinalIncentiveAmount);
-        public decimal OverallAverageScore => Rows.Count == 0 ? 0m : Math.Round(System.Linq.Enumerable.Average(Rows, r => r.MonthlyEvaluationAverage), 2, MidpointRounding.AwayFromZero);
+        public decimal TotalIncentivePayout => Rows.Count == 0 ? 0m : Rows.Sum(r => r.FinalIncentiveAmount);
+        public decimal OverallAverageScore => Rows.Count == 0 ? 0m : Math.Round(Rows.Average(r => r.MonthlyEvaluationAverage), 2, MidpointRounding.AwayFromZero);
     }
 }

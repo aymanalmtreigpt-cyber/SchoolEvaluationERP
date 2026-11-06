@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,7 +11,7 @@ namespace SchoolEvaluationERP.Views
 {
     public partial class SelectEvaluatorDialog : Window
     {
-        private readonly TemplateService _service;
+        private readonly TemplateService _service = new();
         private List<EvaluatorDto> _allEvaluators = new();
 
         public EvaluatorDto? SelectedEvaluator { get; private set; }
@@ -18,7 +19,6 @@ namespace SchoolEvaluationERP.Views
         public SelectEvaluatorDialog()
         {
             InitializeComponent();
-            _service = new TemplateService();
 
             Loaded += async (_, _) =>
             {
@@ -36,7 +36,9 @@ namespace SchoolEvaluationERP.Views
             string q = TxtSearchEvaluator.Text.Trim();
             var filtered = string.IsNullOrEmpty(q)
                 ? _allEvaluators
-                : _allEvaluators.Where(x => x.EvaluatorName.Contains(q)).ToList();
+                : _allEvaluators.Where(x =>
+                    x.EvaluatorName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    x.GroupName.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
 
             LstEvaluators.ItemsSource = filtered;
             if (filtered.Count > 0)

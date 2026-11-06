@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -10,7 +10,7 @@ namespace SchoolEvaluationERP.Views
 {
     public partial class UserManagementView : UserControl
     {
-        private readonly AuthService _authService;
+        private readonly AuthService _authService = new();
         private int _editingUserId = 0;
         private List<PermissionRowViewModel> _currentPermissions = new();
 
@@ -26,7 +26,6 @@ namespace SchoolEvaluationERP.Views
         public UserManagementView()
         {
             InitializeComponent();
-            _authService = new AuthService();
             Loaded += async (_, _) =>
             {
                 await LoadUsersListAsync();

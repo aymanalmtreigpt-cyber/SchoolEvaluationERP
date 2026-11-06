@@ -1,0 +1,174 @@
+<Window x:Class="SchoolEvaluationERP.Views.HierarchyBatchListDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="إنشاء عناصر متعددة"
+        Width="520" Height="530"
+        MinWidth="460" MinHeight="440"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppBgBrush}"
+        FlowDirection="RightToLeft"
+        FontFamily="Segoe UI">
+
+    <Grid Margin="16">
+        <Border Style="{StaticResource CardStyle}" Padding="20">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 0: العنوان -->
+                <StackPanel Grid.Row="0" Margin="0,0,0,12">
+                    <TextBlock x:Name="TxtDialogTitle"
+                               Text="إنشاء وظائف تابعة للفئة"
+                               FontSize="17.5"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimaryBrush}"/>
+                    <TextBlock x:Name="TxtDialogSubtitle"
+                               Text="حدد الفئة ثم اضغط (+ إضافة وظيفة) لإضافة الوظائف إلى القائمة وتعديلها أو حذفها قبل حفظها دفعة واحدة."
+                               FontSize="12.5"
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               TextWrapping="Wrap"
+                               Margin="0,3,0,0"/>
+                </StackPanel>
+
+                <!-- 1: القائمة المنسدلة لاختيار الفئة أو الوظيفة -->
+                <StackPanel Grid.Row="1" Margin="0,0,0,12">
+                    <TextBlock x:Name="TxtParentSelectorLabel"
+                               Text="تحديد الفئة:"
+                               FontWeight="SemiBold"
+                               FontSize="13"
+                               Margin="0,0,0,5"/>
+                    <ComboBox x:Name="CmbParent"
+                              Style="{StaticResource ModernComboBox}"/>
+                </StackPanel>
+
+                <!-- 2: شريط عنوان الحاوية وزر (+ إضافة وظيفة / + إضافة نوع وظيفة) -->
+                <Grid Grid.Row="2" Margin="0,0,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0"
+                               x:Name="TxtContainerHeader"
+                               Text="الوظائف المضافة في القائمة (0):"
+                               FontWeight="Bold"
+                               FontSize="13.5"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               VerticalAlignment="Center"/>
+
+                    <Button Grid.Column="1"
+                            x:Name="BtnOpenAddSubPopup"
+                            Content="+ إضافة وظيفة"
+                            Style="{StaticResource SecondaryButton}"
+                            Height="34"
+                            Padding="14,0"
+                            Click="BtnOpenAddSubPopup_Click"/>
+                </Grid>
+
+                <!-- 3: حاوية العناصر مع أيقونة القلم للتعديل وأيقونة السلة للحذف -->
+                <Border Grid.Row="3"
+                        Background="#F8FAFC"
+                        BorderBrush="#CBD5E1"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="10">
+                    <Grid>
+                        <TextBlock x:Name="TxtEmptyContainerHint"
+                                   Text="لا توجد عناصر مضافة بعد — اضغط على زر (+ إضافة) بالأعلى لإدراج العناصر في هذه الحاوية."
+                                   Foreground="{StaticResource TextSecondaryBrush}"
+                                   FontSize="12.5"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center"
+                                   HorizontalAlignment="Center"
+                                   Margin="16"/>
+
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="ItemsContainer">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Background="White"
+                                                BorderBrush="#E2E8F0"
+                                                BorderThickness="1"
+                                                CornerRadius="7"
+                                                Padding="12,8"
+                                                Margin="0,0,0,6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="8"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="6"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <TextBlock Grid.Column="0"
+                                                           Text="{Binding ItemName}"
+                                                           FontWeight="SemiBold"
+                                                           FontSize="14"
+                                                           Foreground="{StaticResource TextPrimaryBrush}"
+                                                           VerticalAlignment="Center"
+                                                           TextWrapping="Wrap"/>
+
+                                                <!-- أيقونة القلم للتعديل -->
+                                                <Button Grid.Column="2"
+                                                        Content="✏"
+                                                        Style="{StaticResource SecondaryButton}"
+                                                        Width="34"
+                                                        Height="30"
+                                                        Padding="0"
+                                                        FontSize="13.5"
+                                                        ToolTip="تعديل الاسم"
+                                                        Click="BtnEditItemInContainer_Click"/>
+
+                                                <!-- أيقونة السلة للحذف -->
+                                                <Button Grid.Column="4"
+                                                        Content="🗑"
+                                                        Style="{StaticResource DangerButton}"
+                                                        Width="34"
+                                                        Height="30"
+                                                        Padding="0"
+                                                        FontSize="13.5"
+                                                        ToolTip="حذف من القائمة"
+                                                        Click="BtnRemoveItemFromContainer_Click"/>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+                <!-- 4: شريط أزرار الحفظ النهائي والإلغاء -->
+                <Grid Grid.Row="4" Margin="0,14,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="10"/>
+                        <ColumnDefinition Width="115"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0"
+                            x:Name="BtnSaveAll"
+                            Content="💾 حفظ القائمة دفعة واحدة"
+                            Style="{StaticResource PrimaryButton}"
+                            Height="42"
+                            FontSize="14"
+                            Click="BtnSaveAll_Click"/>
+
+                    <Button Grid.Column="2"
+                            Content="إلغاء"
+                            Style="{StaticResource SecondaryButton}"
+                            Height="42"
+                            IsCancel="True"
+                            Click="BtnCancel_Click"/>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

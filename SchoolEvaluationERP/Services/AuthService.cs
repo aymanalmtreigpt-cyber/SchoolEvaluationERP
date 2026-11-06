@@ -65,7 +65,7 @@ namespace SchoolEvaluationERP.Services
             try
             {
                 using var conn = new SqlConnection(_connectionString);
-                await conn.OpenAsync();
+                await DatabaseSchemaService.EnsureSchemaV2Async(conn);
                 var dbName = await conn.ExecuteScalarAsync<string>("SELECT DB_NAME();");
                 return (true, $"متصل بنجاح بقاعدة البيانات ({dbName}) عبر الشبكة.");
             }
@@ -83,7 +83,7 @@ namespace SchoolEvaluationERP.Services
             try
             {
                 using var conn = new SqlConnection(_connectionString);
-                await conn.OpenAsync();
+                await DatabaseSchemaService.EnsureSchemaV2Async(conn);
 
                 var user = await conn.QueryFirstOrDefaultAsync<dynamic>(
                     "SELECT * FROM dbo.Users WHERE Username = @Username",

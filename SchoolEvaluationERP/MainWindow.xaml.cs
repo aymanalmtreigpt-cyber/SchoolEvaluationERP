@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -101,22 +101,22 @@ namespace SchoolEvaluationERP
                     break;
 
                 case "MasterData":
-                    TxtActivePageTitle.Text = "صفحة الأساسيات (الفروع، الوظائف، الفئات، المقيمين، الموظفين)";
+                    TxtActivePageTitle.Text = "صفحة الأساسيات (الهيكل التنظيمي، مجموعات المقيمين، تخصيص الدرجات، الموظفين)";
                     MainContentHost.Content = new MasterDataView();
                     break;
 
                 case "Templates":
-                    TxtActivePageTitle.Text = "إنشاء وتجهيز قوالب التقييم متعددة الأوراق (A4)";
+                    TxtActivePageTitle.Text = "إنشاء وتجهيز قوالب التقييم متعددة الأوراق (A4 PDF / Excel)";
                     MainContentHost.Content = new TemplatesView();
                     break;
 
                 case "ScoreEntry":
-                    TxtActivePageTitle.Text = "إدخال التقييمات الأسبوعية للموظفين";
+                    TxtActivePageTitle.Text = "إدخال التقييمات الشهرية للموظفين";
                     MainContentHost.Content = new ScoreEntryView();
                     break;
 
                 case "HistoryLog":
-                    TxtActivePageTitle.Text = "سجل التقييمات والأرشيف التاريخي";
+                    TxtActivePageTitle.Text = "سجل التقييمات الشهرية والأرشيف التاريخي";
                     MainContentHost.Content = new HistoryLogView();
                     break;
 

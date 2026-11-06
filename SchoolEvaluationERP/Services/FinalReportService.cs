@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Linq;
 using System.Threading.Tasks;
 using ClosedXML.Excel;
@@ -23,13 +24,14 @@ namespace SchoolEvaluationERP.Services
             _connectionString = connectionString;
         }
 
-        private class RawWeeklyEvaluatorScore
+        private class RawMonthlyEvaluatorScore
         {
             public int EmployeeID { get; set; }
             public int EvaluatorID { get; set; }
+            public int GroupID { get; set; }
+            public string GroupName { get; set; } = string.Empty;
             public string EvaluatorName { get; set; } = string.Empty;
-            public int WeekNumber { get; set; }
-            public decimal RawWeekSumOutOf100 { get; set; }
+            public decimal RawMonthSumOutOf100 { get; set; }
             public decimal SnapshotWeight { get; set; }
         }
 
@@ -46,54 +48,77 @@ namespace SchoolEvaluationERP.Services
             bool onlyDeservingIncentive = false)
         {
             using var conn = new SqlConnection(_connectionString);
-            await conn.OpenAsync();
+            await DatabaseSchemaService.EnsureSchemaV2Async(conn);
+            if (conn.State != ConnectionState.Open)
+            {
+                await conn.OpenAsync();
+            }
 
+            // الموظفون المستمرون فقط يظهرون في التقرير النهائي (أما المنقطع فلا يظهر)
             string empSql = @"
                 SELECT e.EmployeeID, e.SystemName, e.EvaluationName,
                        e.BranchID, b.BranchName,
-                       j.JobTitle,
-                       e.CategoryID, c.CategoryName
+                       ISNULL(e.DepartmentID, 0) AS DepartmentID,
+                       e.CategoryID, c.CategoryName,
+                       j.JobTitle, jt.JobTypeName,
+                       e.HasIncentive, e.IsContinuing
                 FROM dbo.Employees e
                 INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
                 INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
+                INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
+                INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
                 WHERE e.IsActive = 1
+                  AND e.IsContinuing = 1
                   AND (@BranchID IS NULL OR e.BranchID = @BranchID)
                   AND (@CategoryID IS NULL OR e.CategoryID = @CategoryID)
-                  AND (@Search = '' OR e.EvaluationName LIKE @Pattern OR e.SystemName LIKE @Pattern OR j.JobTitle LIKE @Pattern)
+                  AND (@Search = '' OR e.EvaluationName LIKE @Pattern OR e.SystemName LIKE @Pattern OR j.JobTitle LIKE @Pattern OR jt.JobTypeName LIKE @Pattern)
                 ORDER BY b.BranchName ASC, e.EvaluationName ASC";
 
             var employees = (await conn.QueryAsync<EmployeeMonthlyReportRowDto>(empSql, new
             {
                 BranchID = filterBranchId,
                 CategoryID = filterCategoryId,
-                Search = searchQuery.Trim(),
-                Pattern = $"%{searchQuery.Trim()}%"
+                Search = (searchQuery ?? string.Empty).Trim(),
+                Pattern = $"%{(searchQuery ?? string.Empty).Trim()}%"
             })).ToList();
 
-            var catEvaluators = (await conn.QueryAsync<dynamic>(@"
-                SELECT ce.CategoryID, ce.EvaluatorID, ev.EvaluatorName, ce.WeightScore
-                FROM dbo.CategoryEvaluators ce
-                INNER JOIN dbo.Evaluators ev ON ce.EvaluatorID = ev.EvaluatorID")).ToList();
+            var catGroups = (await conn.QueryAsync<dynamic>(@"
+                SELECT ceg.CategoryID, ceg.GroupID, eg.GroupName, ceg.WeightScore
+                FROM dbo.CategoryEvaluatorGroups ceg
+                INNER JOIN dbo.EvaluatorGroups eg ON ceg.GroupID = eg.GroupID
+                WHERE eg.IsActive = 1
+                ORDER BY ceg.WeightScore DESC")).ToList();
 
-            var catEvalMap = catEvaluators
+            var catGroupsMap = catGroups
                 .GroupBy(x => (int)x.CategoryID)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            var empAssignedEvals = (await conn.QueryAsync<dynamic>(@"
+                SELECT ee.EmployeeID, ee.EvaluatorID, ev.GroupID, ev.EvaluatorName
+                FROM dbo.EmployeeEvaluators ee
+                INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
+                WHERE ev.IsActive = 1")).ToList();
+
+            var empAssignedMap = empAssignedEvals
+                .GroupBy(x => (int)x.EmployeeID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
             string scoresSql = @"
                 SELECT es.EmployeeID,
                        er.EvaluatorID,
+                       ev.GroupID,
+                       ISNULL(eg.GroupName, N'') AS GroupName,
                        ev.EvaluatorName,
-                       er.WeekNumber,
-                       SUM(es.GivenScore) AS RawWeekSumOutOf100,
+                       SUM(es.GivenScore) AS RawMonthSumOutOf100,
                        MAX(es.SnapshotEvaluatorWeight) AS SnapshotWeight
                 FROM dbo.EvaluationScores es
                 INNER JOIN dbo.EvaluationRecords er ON es.RecordID = er.RecordID
                 INNER JOIN dbo.Evaluators ev ON er.EvaluatorID = ev.EvaluatorID
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
                 WHERE er.EvalYear = @Year AND er.EvalMonth = @Month
-                GROUP BY es.EmployeeID, er.EvaluatorID, ev.EvaluatorName, er.WeekNumber, es.SheetID";
+                GROUP BY es.EmployeeID, er.EvaluatorID, ev.GroupID, eg.GroupName, ev.EvaluatorName, es.SheetID";
 
-            var rawScores = (await conn.QueryAsync<RawWeeklyEvaluatorScore>(scoresSql, new
+            var rawScores = (await conn.QueryAsync<RawMonthlyEvaluatorScore>(scoresSql, new
             {
                 Year = year,
                 Month = month
@@ -118,118 +143,149 @@ namespace SchoolEvaluationERP.Services
             foreach (var emp in employees)
             {
                 scoresByEmployee.TryGetValue(emp.EmployeeID, out var empScores);
-                empScores ??= new List<RawWeeklyEvaluatorScore>();
+                empScores ??= new List<RawMonthlyEvaluatorScore>();
 
-                catEvalMap.TryGetValue(emp.CategoryID, out var requiredCatEvals);
-                requiredCatEvals ??= new List<dynamic>();
+                // توحيد قراءة كل مقيم في حال تكرر في أكثر من ورقة داخل نفس القالب بالخطأ
+                var rawByEvalId = empScores
+                    .GroupBy(s => s.EvaluatorID)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => (
+                            RawOut100: Math.Min(100m, g.Average(x => x.RawMonthSumOutOf100)),
+                            SnapshotWeight: g.Max(x => x.SnapshotWeight),
+                            EvaluatorName: g.First().EvaluatorName,
+                            GroupID: g.First().GroupID,
+                            GroupName: g.First().GroupName
+                        ));
 
-                var fallbackWeightByEvalId = requiredCatEvals.ToDictionary(
-                    k => (int)k.EvaluatorID,
-                    v => (decimal)v.WeightScore);
+                catGroupsMap.TryGetValue(emp.CategoryID, out var reqGroups);
+                reqGroups ??= new List<dynamic>();
 
-                var normalizedScores = empScores
-                    .GroupBy(x => new { x.EvaluatorID, x.EvaluatorName, x.WeekNumber })
-                    .Select(g =>
-                    {
-                        decimal rawOut100 = Math.Min(100m, g.Average(i => i.RawWeekSumOutOf100));
-                        decimal weight = g.Max(i => i.SnapshotWeight);
-                        if (weight <= 0m && fallbackWeightByEvalId.TryGetValue(g.Key.EvaluatorID, out decimal fbW))
-                        {
-                            weight = fbW;
-                        }
-                        if (weight <= 0m && requiredCatEvals.Count == 0)
-                        {
-                            weight = 100m;
-                        }
-                        decimal weightedScore = (rawOut100 / 100m) * weight;
-                        return new
-                        {
-                            g.Key.EvaluatorID,
-                            g.Key.EvaluatorName,
-                            g.Key.WeekNumber,
-                            RawOut100 = rawOut100,
-                            Weight = weight,
-                            WeightedScore = weightedScore
-                        };
-                    }).ToList();
+                empAssignedMap.TryGetValue(emp.EmployeeID, out var assignedForEmp);
+                assignedForEmp ??= new List<dynamic>();
 
-                decimal? GetWeekTotal(int wNum)
+                decimal monthlyTotalScore = 0m;
+                var breakdownParts = new List<string>();
+                var missingEvaluatorNames = new List<string>();
+                int totalEvaluatedCount = 0;
+
+                if (reqGroups.Count > 0)
                 {
-                    var weekItems = normalizedScores.Where(x => x.WeekNumber == wNum).ToList();
-                    if (weekItems.Count == 0) return null;
-                    return Math.Round(weekItems.Sum(x => x.WeightedScore), 2, MidpointRounding.AwayFromZero);
+                    foreach (var grp in reqGroups)
+                    {
+                        int gId = (int)grp.GroupID;
+                        string gName = (string)grp.GroupName;
+                        decimal groupWeight = (decimal)grp.WeightScore;
+
+                        var assignedInGroup = assignedForEmp.Where(a => (int)a.GroupID == gId).ToList();
+                        if (assignedInGroup.Count == 0)
+                        {
+                            missingEvaluatorNames.Add(gName);
+                            continue;
+                        }
+
+                        int assignedCount = assignedInGroup.Count;
+                        decimal rawSumInGroup = 0m;
+                        var memberTexts = new List<string>();
+
+                        foreach (var member in assignedInGroup)
+                        {
+                            int evId = (int)member.EvaluatorID;
+                            string evName = (string)member.EvaluatorName;
+
+                            if (rawByEvalId.TryGetValue(evId, out var evalScore))
+                            {
+                                rawSumInGroup += evalScore.RawOut100;
+                                totalEvaluatedCount++;
+                                decimal individualShare = Math.Round(groupWeight / assignedCount, 2, MidpointRounding.AwayFromZero);
+                                decimal individualWeighted = Math.Round((evalScore.RawOut100 / 100m) * (groupWeight / assignedCount), 2, MidpointRounding.AwayFromZero);
+                                memberTexts.Add($"{evName}: {individualWeighted:0.##}/{individualShare:0.##} ({evalScore.RawOut100:0}%)");
+                            }
+                            else
+                            {
+                                missingEvaluatorNames.Add(evName);
+                            }
+                        }
+
+                        // المعادلة المعتمدة لمجموعة المقيمين: تقسيم وزن المجموعة على المقيمين المسندين للموظف وحساب محصلتهم الدقيقة
+                        decimal groupContribution = ((rawSumInGroup / assignedCount) / 100m) * groupWeight;
+                        monthlyTotalScore += groupContribution;
+
+                        if (memberTexts.Count > 0)
+                        {
+                            if (assignedCount == 1)
+                            {
+                                breakdownParts.Add(memberTexts[0]);
+                            }
+                            else
+                            {
+                                decimal roundedGrpContrib = Math.Round(groupContribution, 2, MidpointRounding.AwayFromZero);
+                                breakdownParts.Add($"{gName} [{string.Join(" + ", memberTexts)} = {roundedGrpContrib:0.##}/{groupWeight:0.##}]");
+                            }
+                        }
+                    }
+                }
+                else if (rawByEvalId.Count > 0)
+                {
+                    // حماية السجلات التاريخية إذا تغيرت الفئات لاحقاً
+                    foreach (var kv in rawByEvalId.Values)
+                    {
+                        decimal w = kv.SnapshotWeight > 0m ? kv.SnapshotWeight : 100m;
+                        decimal contrib = (kv.RawOut100 / 100m) * w;
+                        monthlyTotalScore += contrib;
+                        totalEvaluatedCount++;
+                        breakdownParts.Add($"{kv.EvaluatorName}: {Math.Round(contrib, 2, MidpointRounding.AwayFromZero):0.##}/{w:0.##}");
+                    }
                 }
 
-                emp.Week1Score = GetWeekTotal(1);
-                emp.Week2Score = GetWeekTotal(2);
-                emp.Week3Score = GetWeekTotal(3);
-                emp.Week4Score = GetWeekTotal(4);
-
-                var distinctWeeks = normalizedScores.Select(x => x.WeekNumber).Distinct().ToList();
-                emp.ActualWeeksCount = distinctWeeks.Count;
-
-                var byEvaluator = normalizedScores
-                    .GroupBy(x => new { x.EvaluatorID, x.EvaluatorName })
-                    .Select(g =>
-                    {
-                        int evalWeeksCount = g.Count();
-                        decimal avgWeightedForEval = g.Sum(x => x.WeightedScore) / evalWeeksCount;
-                        decimal evalWeight = g.Max(x => x.Weight);
-                        return new
-                        {
-                            g.Key.EvaluatorID,
-                            g.Key.EvaluatorName,
-                            WeeksCount = evalWeeksCount,
-                            AvgWeighted = Math.Round(avgWeightedForEval, 2, MidpointRounding.AwayFromZero),
-                            MaxWeight = evalWeight
-                        };
-                    }).ToList();
-
-                decimal monthlyTotalScore = byEvaluator.Sum(x => x.AvgWeighted);
                 monthlyTotalScore = Math.Min(100m, Math.Round(monthlyTotalScore, 2, MidpointRounding.AwayFromZero));
 
-                var breakdownParts = new List<string>();
-                foreach (var evSummary in byEvaluator)
+                emp.IsAllEvaluatorsCompleted = missingEvaluatorNames.Count == 0 && totalEvaluatedCount > 0;
+
+                if (missingEvaluatorNames.Count > 0)
                 {
-                    breakdownParts.Add($"{evSummary.EvaluatorName}: {evSummary.AvgWeighted:0.##}/{evSummary.MaxWeight:0.##} ({evSummary.WeeksCount} أسابيع)");
-                }
-
-                var evaluatedIds = byEvaluator.Select(x => x.EvaluatorID).ToHashSet();
-                var missingEvals = requiredCatEvals
-                    .Where(r => !evaluatedIds.Contains((int)r.EvaluatorID))
-                    .Select(r => (string)r.EvaluatorName)
-                    .ToList();
-
-                emp.IsAllEvaluatorsCompleted = missingEvals.Count == 0 && byEvaluator.Count > 0;
-
-                if (missingEvals.Count > 0)
-                {
-                    breakdownParts.Add($"[ينقصه تقييم: {string.Join("، ", missingEvals)}]");
+                    breakdownParts.Add($"[ينقصه تقييم: {string.Join("، ", missingEvaluatorNames)}]");
                 }
 
                 emp.EvaluatorsBreakdownSummary = breakdownParts.Count > 0
                     ? string.Join("  |  ", breakdownParts)
-                    : "لم يتم إدخال تقييمات لهذا الشهر بعد";
+                    : "لم يتم إدخال التقييم الشهري بعد";
 
-                var calc = IncentiveCalculatorService.CalculateMonthlyIncentive(
-                    emp.SystemName,
-                    emp.BranchName,
-                    monthlyTotalScore,
-                    maxIncentiveAmount,
-                    minIncentiveAmount,
-                    year,
-                    month,
-                    debitAccountTitle,
-                    roundToNearest50);
+                // حساب معدل الأداء والحافز: إذا كان الموظف (بدون حافز) يُحفظ معدل أدائه من 100% لكن الحافز المالي = 0 دائماً
+                if (!emp.HasIncentive)
+                {
+                    emp.MonthlyEvaluationAverage = monthlyTotalScore;
+                    emp.ExactIncentivePercent = 0m;
+                    emp.DisplayedIncentivePercent = 0;
+                    emp.FinalIncentiveAmount = 0m;
+                    emp.DebitAccount = debitAccountTitle;
+                    emp.CreditAccountSystemName = emp.SystemName;
+                    emp.StatementText = string.Empty;
+                    int lastDay = DateTime.DaysInMonth(year, month);
+                    emp.EntryDateFormatted = new DateTime(year, month, lastDay).ToString("yyyy-MM-dd");
+                }
+                else
+                {
+                    var calc = IncentiveCalculatorService.CalculateMonthlyIncentive(
+                        emp.SystemName,
+                        emp.BranchName,
+                        monthlyTotalScore,
+                        maxIncentiveAmount,
+                        minIncentiveAmount,
+                        year,
+                        month,
+                        debitAccountTitle,
+                        roundToNearest50);
 
-                emp.MonthlyEvaluationAverage = calc.EvaluationAveragePercent;
-                emp.ExactIncentivePercent = calc.ExactIncentivePercent;
-                emp.DisplayedIncentivePercent = calc.DisplayedIncentivePercent;
-                emp.FinalIncentiveAmount = calc.FinalAmount;
-                emp.DebitAccount = calc.DebitAccount;
-                emp.CreditAccountSystemName = calc.CreditAccountSystemName;
-                emp.StatementText = calc.StatementText;
-                emp.EntryDateFormatted = calc.EntryDateFormatted;
+                    emp.MonthlyEvaluationAverage = calc.EvaluationAveragePercent;
+                    emp.ExactIncentivePercent = calc.ExactIncentivePercent;
+                    emp.DisplayedIncentivePercent = calc.DisplayedIncentivePercent;
+                    emp.FinalIncentiveAmount = calc.FinalAmount;
+                    emp.DebitAccount = calc.DebitAccount;
+                    emp.CreditAccountSystemName = calc.CreditAccountSystemName;
+                    emp.StatementText = calc.StatementText;
+                    emp.EntryDateFormatted = calc.EntryDateFormatted;
+                }
 
                 if (onlyDeservingIncentive && emp.FinalIncentiveAmount <= 0m)
                     continue;
@@ -313,7 +369,7 @@ namespace SchoolEvaluationERP.Services
             wsJournal.Range(rowIdx, 1, rowIdx, 2).Merge();
             wsJournal.Cell(rowIdx, 3).Value = report.TotalIncentivePayout;
             wsJournal.Cell(rowIdx, 3).Style.NumberFormat.Format = "#,##0";
-            wsJournal.Cell(rowIdx, 5).Value = $"إجمالي المستحقين: {report.DeservingEmployeesCount} من أصل {report.TotalEmployeesCount} موظف — شهر {monthName}/{report.Year} م";
+            wsJournal.Cell(rowIdx, 5).Value = $"إجمالي المستحقين: {report.DeservingEmployeesCount} من أصل {report.TotalEmployeesCount} موظف مستمر — شهر {monthName}/{report.Year} م";
 
             var totalRange = wsJournal.Range(rowIdx, 1, rowIdx, 6);
             totalRange.Style.Font.Bold = true;
@@ -322,8 +378,8 @@ namespace SchoolEvaluationERP.Services
 
             wsJournal.Columns().AdjustToContents();
 
-            // الورقة الثانية: تفاصيل التقييم والأسابيع والمقيمين
-            var wsDetails = wb.Worksheets.Add("تفاصيل التقييم والأسابيع");
+            // الورقة الثانية: تفاصيل التقييم الشهري والأداء ومجموعات المقيمين
+            var wsDetails = wb.Worksheets.Add("تفاصيل التقييم الشهري");
             wsDetails.RightToLeft = true;
 
             string[] detailHeaders =
@@ -332,15 +388,12 @@ namespace SchoolEvaluationERP.Services
                 "الاسم التقييمي",
                 "الاسم في النظام",
                 "الفرع",
-                "الوظيفة",
                 "الفئة",
-                "الأسبوع 1",
-                "الأسبوع 2",
-                "الأسبوع 3",
-                "الأسبوع 4",
-                "عدد الأسابيع الفعلية",
-                "تفصيل درجات المقيمين",
-                "معدل التقييم الشهري %",
+                "الوظيفة ونوعها",
+                "حالة الحافز",
+                "تفصيل درجات مجموعات المقيمين",
+                "اكتمال التقييم",
+                "معدل الأداء الشهري %",
                 "نسبة الحافز المستحقة %",
                 "مبلغ الحافز المعتمد"
             };
@@ -364,20 +417,17 @@ namespace SchoolEvaluationERP.Services
                 wsDetails.Cell(dRow, 2).Value = r.EvaluationName;
                 wsDetails.Cell(dRow, 3).Value = r.SystemName;
                 wsDetails.Cell(dRow, 4).Value = r.BranchName;
-                wsDetails.Cell(dRow, 5).Value = r.JobTitle;
-                wsDetails.Cell(dRow, 6).Value = r.CategoryName;
-                wsDetails.Cell(dRow, 7).Value = r.Week1Display;
-                wsDetails.Cell(dRow, 8).Value = r.Week2Display;
-                wsDetails.Cell(dRow, 9).Value = r.Week3Display;
-                wsDetails.Cell(dRow, 10).Value = r.Week4Display;
-                wsDetails.Cell(dRow, 11).Value = r.ActualWeeksCount;
-                wsDetails.Cell(dRow, 12).Value = r.EvaluatorsBreakdownSummary;
-                wsDetails.Cell(dRow, 13).Value = r.MonthlyEvaluationAverage;
-                wsDetails.Cell(dRow, 14).Value = r.DisplayedIncentivePercent;
-                wsDetails.Cell(dRow, 15).Value = r.FinalIncentiveAmount;
-                wsDetails.Cell(dRow, 15).Style.NumberFormat.Format = "#,##0";
+                wsDetails.Cell(dRow, 5).Value = r.CategoryName;
+                wsDetails.Cell(dRow, 6).Value = r.FullJobDisplay;
+                wsDetails.Cell(dRow, 7).Value = r.HasIncentiveDisplay;
+                wsDetails.Cell(dRow, 8).Value = r.EvaluatorsBreakdownSummary;
+                wsDetails.Cell(dRow, 9).Value = r.CompletionStatusDisplay;
+                wsDetails.Cell(dRow, 10).Value = r.MonthlyEvaluationAverage;
+                wsDetails.Cell(dRow, 11).Value = r.HasIncentive ? $"{r.DisplayedIncentivePercent}%" : "بدون حافز";
+                wsDetails.Cell(dRow, 12).Value = r.FinalIncentiveAmount;
+                wsDetails.Cell(dRow, 12).Style.NumberFormat.Format = "#,##0";
 
-                for (int c = 1; c <= 15; c++)
+                for (int c = 1; c <= 12; c++)
                 {
                     wsDetails.Cell(dRow, c).Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
                     wsDetails.Cell(dRow, c).Style.Border.OutsideBorderColor = XLColor.FromHtml("#E2E8F0");
@@ -417,7 +467,7 @@ namespace SchoolEvaluationERP.Services
                         row.ConstantItem(220).AlignLeft().Column(col =>
                         {
                             col.Item().Text($"تاريخ الإصدار: {DateTime.Now:yyyy-MM-dd}").FontSize(9.5f);
-                            col.Item().PaddingTop(3).Text($"إجمالي الموظفين: {report.TotalEmployeesCount}  |  المستحقون: {report.DeservingEmployeesCount}")
+                            col.Item().PaddingTop(3).Text($"إجمالي المستمرين: {report.TotalEmployeesCount}  |  المستحقون: {report.DeservingEmployeesCount}")
                                .FontSize(9.5f).Bold().FontColor(Colors.Green.Darken3);
                         });
                     });
@@ -434,7 +484,7 @@ namespace SchoolEvaluationERP.Services
                                 cols.ConstantColumn(55);
                                 cols.RelativeColumn(1.7f);
                                 cols.ConstantColumn(45);
-                                cols.ConstantColumn(45);
+                                cols.ConstantColumn(52);
                                 cols.RelativeColumn(2.2f);
                                 cols.ConstantColumn(62);
                             });
@@ -446,7 +496,7 @@ namespace SchoolEvaluationERP.Services
                                 header.Cell().Element(PdfHeaderStyle).Text("الحساب المدين");
                                 header.Cell().Element(PdfHeaderStyle).Text("المبلغ");
                                 header.Cell().Element(PdfHeaderStyle).Text("الحساب الدائن");
-                                header.Cell().Element(PdfHeaderStyle).Text("المعدل");
+                                header.Cell().Element(PdfHeaderStyle).Text("الأداء");
                                 header.Cell().Element(PdfHeaderStyle).Text("النسبة");
                                 header.Cell().Element(PdfHeaderStyle).Text("البيان");
                                 header.Cell().Element(PdfHeaderStyle).Text("التاريخ");
@@ -460,7 +510,7 @@ namespace SchoolEvaluationERP.Services
                                 table.Cell().Element(PdfBodyStyle).AlignCenter().Text(r.FinalAmountDisplay).Bold().FontColor(r.FinalIncentiveAmount > 0 ? Colors.Green.Darken3 : Colors.Grey.Medium);
                                 table.Cell().Element(PdfBodyStyle).Text(r.CreditAccountSystemName).SemiBold();
                                 table.Cell().Element(PdfBodyStyle).AlignCenter().Text(r.MonthlyAverageDisplay);
-                                table.Cell().Element(PdfBodyStyle).AlignCenter().Text(r.IncentivePercentDisplay);
+                                table.Cell().Element(PdfBodyStyle).AlignCenter().Text(r.IncentivePercentDisplay).FontSize(8.5f);
                                 table.Cell().Element(PdfBodyStyle).Text(r.StatementText).FontSize(8.5f);
                                 table.Cell().Element(PdfBodyStyle).AlignCenter().Text(r.EntryDateFormatted).FontSize(8.5f);
                             }

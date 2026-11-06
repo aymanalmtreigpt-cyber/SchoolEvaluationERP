@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -6,6 +6,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
+using Microsoft.Win32;
 using SchoolEvaluationERP.Models;
 using SchoolEvaluationERP.Services;
 
@@ -13,24 +14,53 @@ namespace SchoolEvaluationERP.Views
 {
     public partial class ScoreEntryView : UserControl
     {
-        private readonly WeeklyEvaluationService _service;
+        private const int FirstCriteriaColIndex = 5;
+
+        private readonly WeeklyEvaluationService _service = new();
         private WeeklyEvaluationWorkspaceModel? _currentWorkspace;
         private WeeklyEntrySheetModel? _activeSheet;
         private bool _isSuppressingSelectionEvents;
         private bool _isReadOnlyMode;
+        private bool _isHorizontalAdvance = true;
 
         private bool CanInsert => AuthService.CurrentSession?.HasPermission("ScoreEntry", "insert") == true;
         private bool CanUpdate => AuthService.CurrentSession?.HasPermission("ScoreEntry", "update") == true;
 
         public ScoreEntryView()
         {
+            _isSuppressingSelectionEvents = true;
             InitializeComponent();
-            _service = new WeeklyEvaluationService();
+            _isSuppressingSelectionEvents = false;
+            UpdateDirectionButtonsVisual();
 
             Loaded += async (_, _) =>
             {
                 await InitializeSelectorsAsync();
             };
+        }
+
+        private void BtnNavHorizontal_Click(object sender, RoutedEventArgs e)
+        {
+            _isHorizontalAdvance = true;
+            UpdateDirectionButtonsVisual();
+        }
+
+        private void BtnNavVertical_Click(object sender, RoutedEventArgs e)
+        {
+            _isHorizontalAdvance = false;
+            UpdateDirectionButtonsVisual();
+        }
+
+        private void UpdateDirectionButtonsVisual()
+        {
+            var primaryStyle = TryFindResource("PrimaryButton") as Style;
+            var secondaryStyle = TryFindResource("SecondaryButton") as Style;
+
+            if (primaryStyle != null && secondaryStyle != null)
+            {
+                BtnNavHorizontal.Style = _isHorizontalAdvance ? primaryStyle : secondaryStyle;
+                BtnNavVertical.Style = !_isHorizontalAdvance ? primaryStyle : secondaryStyle;
+            }
         }
 
         private async Task InitializeSelectorsAsync()
@@ -66,13 +96,14 @@ namespace SchoolEvaluationERP.Views
             _currentWorkspace = null;
             _activeSheet = null;
             TxtWorkspaceHeader.Text = message;
-            BadgeWeekStatus.Visibility = Visibility.Collapsed;
-            
-            BtnUnlockSavedWeekEdit.Visibility = Visibility.Collapsed;
+            BadgeMonthStatus.Visibility = Visibility.Collapsed;
+
+            BtnUnlockSavedMonthEdit.Visibility = Visibility.Collapsed;
+            BtnImportScoresExcel.IsEnabled = false;
             BtnFillFullMarksAll.IsEnabled = false;
             BtnFillFullMarksSelected.IsEnabled = false;
             BtnClearMarksZero.IsEnabled = false;
-            BtnSaveWeeklyEvaluation.IsEnabled = false;
+            BtnSaveMonthlyEvaluation.IsEnabled = false;
             GridWeeklyScores.Columns.Clear();
             GridWeeklyScores.ItemsSource = null;
             StackSheetTabs.Children.Clear();
@@ -82,27 +113,21 @@ namespace SchoolEvaluationERP.Views
         private async void CmbTemplate_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isSuppressingSelectionEvents) return;
-            await RefreshWeeksAndLoadWorkspaceAsync(autoPickFirstAvailableWeek: true);
+            await LoadSelectedMonthWorkspaceAsync();
         }
 
         private async void PeriodFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isSuppressingSelectionEvents) return;
-            await RefreshWeeksAndLoadWorkspaceAsync(autoPickFirstAvailableWeek: true);
-        }
-
-        private async void CmbWeek_SelectionChanged(object sender, SelectionChangedEventArgs e)
-        {
-            if (_isSuppressingSelectionEvents) return;
-            await LoadSelectedWeekWorkspaceAsync();
+            await LoadSelectedMonthWorkspaceAsync();
         }
 
         private async void BtnReloadWorkspace_Click(object sender, RoutedEventArgs e)
         {
-            await RefreshWeeksAndLoadWorkspaceAsync(autoPickFirstAvailableWeek: false);
+            await LoadSelectedMonthWorkspaceAsync();
         }
 
-        private async Task RefreshWeeksAndLoadWorkspaceAsync(bool autoPickFirstAvailableWeek)
+        private async Task LoadSelectedMonthWorkspaceAsync()
         {
             if (CmbTemplate.SelectedItem is not TemplateSummaryDto selectedTemplate ||
                 CmbYear.SelectedItem is not int year ||
@@ -111,51 +136,22 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            int previouslySelectedWeek = CmbWeek.SelectedValue is int w ? w : 1;
+            var monthStatus = await _service.GetMonthStatusAsync(selectedTemplate.TemplateID, year, month);
 
-            _isSuppressingSelectionEvents = true;
-            var weeks = await _service.GetWeeksStatusAsync(selectedTemplate.TemplateID, year, month);
-            CmbWeek.ItemsSource = weeks;
-
-            if (autoPickFirstAvailableWeek)
+            if (monthStatus.IsAlreadyEntered && monthStatus.ExistingRecordId.HasValue)
             {
-                var firstOpen = weeks.FirstOrDefault(x => !x.IsAlreadyEntered) ?? weeks[0];
-                CmbWeek.SelectedItem = firstOpen;
-            }
-            else
-            {
-                CmbWeek.SelectedValue = previouslySelectedWeek;
-                if (CmbWeek.SelectedItem == null) CmbWeek.SelectedIndex = 0;
-            }
-
-            _isSuppressingSelectionEvents = false;
-            await LoadSelectedWeekWorkspaceAsync();
-        }
-
-        private async Task LoadSelectedWeekWorkspaceAsync()
-        {
-            if (CmbTemplate.SelectedItem is not TemplateSummaryDto selectedTemplate ||
-                CmbYear.SelectedItem is not int year ||
-                CmbMonth.SelectedValue is not int month ||
-                CmbWeek.SelectedItem is not WeekStatusItem selectedWeek)
-            {
-                return;
-            }
-
-            if (selectedWeek.IsAlreadyEntered && selectedWeek.ExistingRecordId.HasValue)
-            {
-                _currentWorkspace = await _service.LoadSavedRecordWorkspaceAsync(selectedWeek.ExistingRecordId.Value);
+                _currentWorkspace = await _service.LoadSavedRecordWorkspaceAsync(monthStatus.ExistingRecordId.Value);
                 _isReadOnlyMode = true;
             }
             else
             {
-                _currentWorkspace = await _service.PrepareNewWorkspaceAsync(selectedTemplate.TemplateID, year, month, selectedWeek.WeekNumber);
+                _currentWorkspace = await _service.PrepareNewWorkspaceAsync(selectedTemplate.TemplateID, year, month);
                 _isReadOnlyMode = !CanInsert;
             }
 
             if (_currentWorkspace == null || _currentWorkspace.Sheets.Count == 0)
             {
-                SetEmptyState("تعذر تحميل أوراق هذا القالب. تأكد من احتواء القالب على ورقة عمل واحدة وموظفين.");
+                SetEmptyState("تعذر تحميل أوراق هذا القالب. تأكد من احتواء القالب على ورقة عمل واحدة وموظفين مستمرين.");
                 return;
             }
 
@@ -172,54 +168,53 @@ namespace SchoolEvaluationERP.Views
             bool canEditNow = !_isReadOnlyMode && hasPermissionToEdit;
 
             string monthName = IncentiveCalculatorService.GetArabicMonthName(_currentWorkspace.EvalMonth);
-            TxtWorkspaceHeader.Text = $"المقيم: {_currentWorkspace.EvaluatorName}  —  شهر {monthName} {_currentWorkspace.EvalYear} م  —  الأسبوع ({_currentWorkspace.WeekNumber})";
+            string groupInfo = string.IsNullOrWhiteSpace(_currentWorkspace.GroupName) ? "" : $" [{_currentWorkspace.GroupName}]";
+            TxtWorkspaceHeader.Text = $"المقيم: {_currentWorkspace.EvaluatorName}{groupInfo}  —  التقييم الشهري لشهر {monthName} {_currentWorkspace.EvalYear} م";
 
-            BadgeWeekStatus.Visibility = Visibility.Visible;
+            BadgeMonthStatus.Visibility = Visibility.Visible;
             if (isExistingSavedRecord)
             {
                 if (canEditNow)
                 {
-                    BadgeWeekStatus.Background = new SolidColorBrush(Color.FromRgb(239, 246, 255));
-                    BadgeWeekStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(147, 197, 253));
-                    TxtBadgeWeekStatus.Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175));
-                    TxtBadgeWeekStatus.Text = "✏ وضع تعديل تقييم محفوظ مسبقاً";
-                    BtnUnlockSavedWeekEdit.Visibility = Visibility.Collapsed;
+                    BadgeMonthStatus.Background = new SolidColorBrush(Color.FromRgb(239, 246, 255));
+                    BadgeMonthStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(147, 197, 253));
+                    TxtBadgeMonthStatus.Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175));
+                    TxtBadgeMonthStatus.Text = "✏ وضع تعديل تقييم الشهر المحفوظ";
+                    BtnUnlockSavedMonthEdit.Visibility = Visibility.Collapsed;
                 }
                 else
                 {
-                    BadgeWeekStatus.Background = new SolidColorBrush(Color.FromRgb(254, 243, 199));
-                    BadgeWeekStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(252, 211, 77));
-                    TxtBadgeWeekStatus.Foreground = new SolidColorBrush(Color.FromRgb(146, 64, 14));
-                    TxtBadgeWeekStatus.Text = "🔒 تم إدخال هذا الأسبوع مسبقاً (وضع القراءة فقط)";
-                    BtnUnlockSavedWeekEdit.Visibility = CanUpdate ? Visibility.Visible : Visibility.Collapsed;
+                    BadgeMonthStatus.Background = new SolidColorBrush(Color.FromRgb(254, 243, 199));
+                    BadgeMonthStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(252, 211, 77));
+                    TxtBadgeMonthStatus.Foreground = new SolidColorBrush(Color.FromRgb(146, 64, 14));
+                    TxtBadgeMonthStatus.Text = "🔒 تم إدخال تقييم هذا الشهر مسبقاً (وضع القراءة فقط)";
+                    BtnUnlockSavedMonthEdit.Visibility = CanUpdate ? Visibility.Visible : Visibility.Collapsed;
                 }
             }
             else
             {
-                BadgeWeekStatus.Background = new SolidColorBrush(Color.FromRgb(236, 253, 245));
-                BadgeWeekStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(167, 243, 208));
-                TxtBadgeWeekStatus.Foreground = new SolidColorBrush(Color.FromRgb(4, 120, 87));
-                TxtBadgeWeekStatus.Text = canEditNow ? "✔ أسبوع جديد متاح للإدخال" : "🔒 وضع القراءة فقط (لا تملك صلاحية الإضافة)";
-                BtnUnlockSavedWeekEdit.Visibility = Visibility.Collapsed;
+                BadgeMonthStatus.Background = new SolidColorBrush(Color.FromRgb(236, 253, 245));
+                BadgeMonthStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(167, 243, 208));
+                TxtBadgeMonthStatus.Foreground = new SolidColorBrush(Color.FromRgb(4, 120, 87));
+                TxtBadgeMonthStatus.Text = canEditNow ? "✔ شهر جديد متاح للإدخال" : "🔒 وضع القراءة فقط (لا تملك صلاحية الإضافة)";
+                BtnUnlockSavedMonthEdit.Visibility = Visibility.Collapsed;
             }
 
-            
-            
-
+            BtnImportScoresExcel.IsEnabled = canEditNow;
             BtnFillFullMarksAll.IsEnabled = canEditNow;
             BtnFillFullMarksSelected.IsEnabled = canEditNow;
             BtnClearMarksZero.IsEnabled = canEditNow;
-            BtnSaveWeeklyEvaluation.IsEnabled = canEditNow;
-            BtnSaveWeeklyEvaluation.Content = isExistingSavedRecord
-                ? "💾 حفظ التعديلات على هذا الأسبوع"
-                : "💾 حفظ واعتماد تقييم الأسبوع";
+            BtnSaveMonthlyEvaluation.IsEnabled = canEditNow;
+            BtnSaveMonthlyEvaluation.Content = isExistingSavedRecord
+                ? "💾 حفظ التعديلات على تقييم الشهر"
+                : "💾 حفظ واعتماد تقييم الشهر";
 
             RebuildScoresDataGrid(canEditNow);
             RebuildBottomSheetTabsBar();
             UpdateSheetAverageBadge();
         }
 
-        private void BtnUnlockSavedWeekEdit_Click(object sender, RoutedEventArgs e)
+        private void BtnUnlockSavedMonthEdit_Click(object sender, RoutedEventArgs e)
         {
             if (!CanUpdate)
             {
@@ -241,6 +236,7 @@ namespace SchoolEvaluationERP.Views
 
             var wrapStyle = TryFindResource("WrappingCellTextStyle") as Style;
 
+            // العمود 0: م
             GridWeeklyScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "م",
@@ -250,54 +246,68 @@ namespace SchoolEvaluationERP.Views
                 Width = 45
             });
 
+            // العمود 1: الاسم التقييمي
             GridWeeklyScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "الاسم التقييمي للموظف",
                 Binding = new Binding("EvaluationName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 210
+                Width = 195
             });
 
+            // العمود 2: الفرع
             GridWeeklyScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "الفرع",
                 Binding = new Binding("BranchName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 90
+                Width = 85
             });
 
+            // العمود 3: الوظيفة ونوعها
             GridWeeklyScores.Columns.Add(new DataGridTextColumn
             {
-                Header = "الوظيفة",
-                Binding = new Binding("JobTitle"),
+                Header = "الوظيفة ونوعها",
+                Binding = new Binding("FullJobDisplay"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 90
+                Width = 135
+            });
+
+            // العمود 4: الحافز
+            GridWeeklyScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "الحافز",
+                Binding = new Binding("IncentiveBadgeDisplay"),
+                ElementStyle = wrapStyle,
+                IsReadOnly = true,
+                Width = 95
             });
 
             var scoreDisplayStyle = new Style(typeof(TextBlock));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Center));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
-            scoreDisplayStyle.Setters.Add(new Setter(TextBlock.FontSizeProperty, 14.0));
+            scoreDisplayStyle.Setters.Add(new Setter(TextBlock.FontSizeProperty, 14.5));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(30, 64, 175))));
 
             var scoreEditStyle = new Style(typeof(TextBox));
             scoreEditStyle.Setters.Add(new Setter(TextBox.TextAlignmentProperty, TextAlignment.Center));
             scoreEditStyle.Setters.Add(new Setter(TextBox.VerticalContentAlignmentProperty, VerticalAlignment.Center));
             scoreEditStyle.Setters.Add(new Setter(TextBox.FontWeightProperty, FontWeights.Bold));
-            scoreEditStyle.Setters.Add(new Setter(TextBox.FontSizeProperty, 14.0));
+            scoreEditStyle.Setters.Add(new Setter(TextBox.FontSizeProperty, 14.5));
             scoreEditStyle.Setters.Add(new Setter(TextBox.BackgroundProperty, new SolidColorBrush(Color.FromRgb(239, 246, 255))));
 
+            // الأعمدة الديناميكية للمبادئ ابتداءً من الفهرس FirstCriteriaColIndex = 5
             for (int i = 0; i < _activeSheet.CriteriaColumns.Count; i++)
             {
                 var crit = _activeSheet.CriteriaColumns[i];
 
                 var col = new DataGridTextColumn
                 {
-                    Header = $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0.##})",
+                    Header = $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0})",
                     Binding = new Binding($"[{i}]")
                     {
                         Mode = BindingMode.TwoWay,
@@ -324,7 +334,7 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("RawTotalDisplay"),
                 ElementStyle = totalStyle,
                 IsReadOnly = true,
-                Width = 105
+                Width = 100
             });
 
             var weightedStyle = new Style(typeof(TextBlock));
@@ -335,11 +345,11 @@ namespace SchoolEvaluationERP.Views
 
             GridWeeklyScores.Columns.Add(new DataGridTextColumn
             {
-                Header = "الدرجة الموزونة\nبوزن المقيم",
+                Header = "حصة المقيم\nالموزونة",
                 Binding = new Binding("WeightedScoreDisplay"),
                 ElementStyle = weightedStyle,
                 IsReadOnly = true,
-                Width = 120
+                Width = 115
             });
 
             GridWeeklyScores.ItemsSource = null;
@@ -368,6 +378,19 @@ namespace SchoolEvaluationERP.Views
             }
         }
 
+        private void GridWeeklyScores_PreparingCellForEdit(object sender, DataGridPreparingCellForEditEventArgs e)
+        {
+            if (_activeSheet == null || _isReadOnlyMode) return;
+
+            ScoreGridNavigationHelper.AttachEditorHandlers(
+                GridWeeklyScores,
+                e,
+                FirstCriteriaColIndex,
+                _activeSheet.CriteriaColumns.Count,
+                () => _isHorizontalAdvance,
+                UpdateSheetAverageBadge);
+        }
+
         private void GridWeeklyScores_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
         {
             Dispatcher.BeginInvoke(new Action(UpdateSheetAverageBadge), System.Windows.Threading.DispatcherPriority.Background);
@@ -383,6 +406,30 @@ namespace SchoolEvaluationERP.Views
 
             decimal avg = _activeSheet.EmployeeRows.Average(r => r.RawTotalOutOf100);
             TxtSheetAverageBadge.Text = $"متوسط درجات الورقة الحالية ({_activeSheet.EmployeeRows.Count} موظف): {avg:0.##} من 100";
+        }
+
+        private void BtnImportScoresExcel_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentWorkspace == null || _isReadOnlyMode) return;
+
+            var ofd = new OpenFileDialog
+            {
+                Title = "اختر ملف إكسل الدرجات الشهري المستخرج من القالب",
+                Filter = "Excel Workbook (*.xlsx)|*.xlsx"
+            };
+
+            if (ofd.ShowDialog() == true)
+            {
+                var (isSuccess, message) = TemplateExcelExportService.ImportScoresIntoWorkspace(_currentWorkspace, ofd.FileName);
+                GridWeeklyScores.Items.Refresh();
+                UpdateSheetAverageBadge();
+
+                MessageBox.Show(
+                    message,
+                    isSuccess ? "استيراد الدرجات الشهرية من Excel" : "تنبيه الاستيراد",
+                    MessageBoxButton.OK,
+                    isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
         }
 
         private void BtnFillFullMarksAll_Click(object sender, RoutedEventArgs e)
@@ -471,28 +518,27 @@ namespace SchoolEvaluationERP.Views
             }
         }
 
-        private async void BtnSaveWeeklyEvaluation_Click(object sender, RoutedEventArgs e)
+        private async void BtnSaveMonthlyEvaluation_Click(object sender, RoutedEventArgs e)
         {
             if (_currentWorkspace == null || _isReadOnlyMode) return;
 
             GridWeeklyScores.CommitEdit(DataGridEditingUnit.Cell, true);
             GridWeeklyScores.CommitEdit(DataGridEditingUnit.Row, true);
 
-            BtnSaveWeeklyEvaluation.IsEnabled = false;
-            var (isSuccess, message, savedRecordId) = await _service.SaveWeeklyEvaluationAsync(_currentWorkspace, "ScoreEntry");
-            BtnSaveWeeklyEvaluation.IsEnabled = true;
+            BtnSaveMonthlyEvaluation.IsEnabled = false;
+            var (isSuccess, message, savedRecordId) = await _service.SaveMonthlyEvaluationAsync(_currentWorkspace, "ScoreEntry");
+            BtnSaveMonthlyEvaluation.IsEnabled = true;
 
             MessageBox.Show(
                 message,
-                isSuccess ? "تم حفظ التقييم الأسبوعي" : "تنبيه التحقق من التقييم",
+                isSuccess ? "تم حفظ التقييم الشهري" : "تنبيه التحقق من التقييم",
                 MessageBoxButton.OK,
                 isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
 
             if (isSuccess && savedRecordId > 0)
             {
-                await RefreshWeeksAndLoadWorkspaceAsync(autoPickFirstAvailableWeek: false);
+                await LoadSelectedMonthWorkspaceAsync();
             }
         }
     }
 }
-

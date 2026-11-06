@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using SchoolEvaluationERP.Models;
 using SchoolEvaluationERP.Services;
@@ -11,56 +13,77 @@ namespace SchoolEvaluationERP.Views
 {
     public partial class CategoryDialog : Window
     {
-        private readonly MasterDataService _service;
-        private readonly int _editingCategoryId;
-        private readonly int? _preselectedBranchId;
-        private readonly string _initialCategoryName;
-        private List<CategoryEvaluatorSelectRow> _evaluatorRows = new();
+        private readonly MasterDataService _service = new();
+        private readonly int _initialCategoryId;
+        private List<CategoryEvaluatorGroupSelectRow> _groupRows = new();
+        private bool _isLoadingCategories;
 
-        public CategoryDialog(int editingCategoryId = 0, string initialName = "", int? branchId = null)
+        public bool HasSavedChanges { get; private set; }
+
+        public CategoryDialog(int initialCategoryId = 0)
         {
+            _initialCategoryId = initialCategoryId;
+            _isLoadingCategories = true;
             InitializeComponent();
-            _service = new MasterDataService();
-            _editingCategoryId = editingCategoryId;
-            _initialCategoryName = initialName;
-            _preselectedBranchId = branchId;
-
-            if (_editingCategoryId > 0)
-            {
-                TxtDialogTitle.Text = $"تعديل الفئة وأوزان المقيمين: {initialName}";
-            }
+            _isLoadingCategories = false;
 
             Loaded += async (_, _) =>
             {
-                TxtCategoryName.Text = _initialCategoryName;
-                var branches = await _service.GetBranchesAsync();
-                CmbBranch.ItemsSource = branches;
-
-                if (_preselectedBranchId.HasValue)
-                    CmbBranch.SelectedValue = _preselectedBranchId.Value;
-                else if (branches.Count > 0)
-                    CmbBranch.SelectedIndex = 0;
-
-                _evaluatorRows = await _service.GetCategoryEvaluatorMatrixAsync(_editingCategoryId);
-                foreach (var row in _evaluatorRows)
-                {
-                    row.PropertyChanged += EvaluatorRow_PropertyChanged;
-                }
-
-                GridEvaluators.ItemsSource = _evaluatorRows;
-                UpdateLiveTotalCounter();
-                TxtCategoryName.Focus();
+                await LoadCategoriesAsync(_initialCategoryId);
             };
         }
 
-        private void EvaluatorRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        private async Task LoadCategoriesAsync(int selectCategoryId)
+        {
+            _isLoadingCategories = true;
+            var categories = await _service.GetCategoriesAsync();
+            GridCategoriesList.ItemsSource = categories;
+            _isLoadingCategories = false;
+
+            if (categories.Count == 0)
+            {
+                TxtSelectedCategoryTitle.Text = "لا توجد فئات مسجلة بعد — أنشئ الفئات أولاً.";
+                BtnSaveWeights.IsEnabled = false;
+                return;
+            }
+
+            var match = selectCategoryId > 0
+                ? categories.FirstOrDefault(c => c.CategoryID == selectCategoryId)
+                : null;
+
+            GridCategoriesList.SelectedItem = match ?? categories[0];
+        }
+
+        private async void GridCategoriesList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isLoadingCategories) return;
+
+            if (GridCategoriesList.SelectedItem is not CategoryDto selectedCat)
+            {
+                GridEvaluatorGroups.ItemsSource = null;
+                return;
+            }
+
+            TxtSelectedCategoryTitle.Text = $"الفئة المحددة: {selectedCat.CategoryName}";
+
+            _groupRows = await _service.GetCategoryEvaluatorGroupMatrixAsync(selectedCat.CategoryID);
+            foreach (var row in _groupRows)
+            {
+                row.PropertyChanged += GroupRow_PropertyChanged;
+            }
+
+            GridEvaluatorGroups.ItemsSource = _groupRows;
+            UpdateLiveTotalCounter();
+        }
+
+        private void GroupRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             UpdateLiveTotalCounter();
         }
 
         private void UpdateLiveTotalCounter()
         {
-            decimal total = _evaluatorRows.Where(x => x.IsSelected).Sum(x => x.WeightScore);
+            decimal total = _groupRows.Where(x => x.IsSelected).Sum(x => x.WeightScore);
             decimal remaining = 100m - total;
 
             if (total == 100m)
@@ -88,10 +111,10 @@ namespace SchoolEvaluationERP.Views
 
         private void BtnDistributeEqually_Click(object sender, RoutedEventArgs e)
         {
-            var selected = _evaluatorRows.Where(x => x.IsSelected).ToList();
+            var selected = _groupRows.Where(x => x.IsSelected).ToList();
             if (selected.Count == 0)
             {
-                MessageBox.Show("يرجى وضع علامة صح (اختيار) أمام المقيمين الذين تريد توزيع الـ 100 درجة عليهم أولاً.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("يرجى وضع علامة صح (اختيار) أمام مجموعات المقيمين المراد توزيع الـ 100 درجة عليها أولاً.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -111,40 +134,39 @@ namespace SchoolEvaluationERP.Views
                 }
             }
 
-            GridEvaluators.Items.Refresh();
+            GridEvaluatorGroups.Items.Refresh();
             UpdateLiveTotalCounter();
         }
 
-        private async void BtnSaveCategory_Click(object sender, RoutedEventArgs e)
+        private async void BtnSaveWeights_Click(object sender, RoutedEventArgs e)
         {
-            if (CmbBranch.SelectedValue is not int branchId || branchId <= 0)
+            if (GridCategoriesList.SelectedItem is not CategoryDto selectedCat)
             {
-                MessageBox.Show("يرجى اختيار الفرع أولاً.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("يرجى اختيار الفئة من القائمة اليمنى أولاً.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            BtnSaveCategory.IsEnabled = false;
-            var (isSuccess, message) = await _service.SaveCategoryWithEvaluatorsAsync(
-                _editingCategoryId,
-                TxtCategoryName.Text,
-                branchId,
-                _evaluatorRows);
-            BtnSaveCategory.IsEnabled = true;
+            GridEvaluatorGroups.CommitEdit(DataGridEditingUnit.Cell, true);
+            GridEvaluatorGroups.CommitEdit(DataGridEditingUnit.Row, true);
+
+            BtnSaveWeights.IsEnabled = false;
+            var (isSuccess, message) = await _service.SaveCategoryEvaluatorWeightsAsync(selectedCat.CategoryID, _groupRows);
+            BtnSaveWeights.IsEnabled = true;
 
             if (!isSuccess)
             {
-                MessageBox.Show(message, "تنبيه التحقق من البيانات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(message, "تنبيه التحقق من الدرجات", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
-            MessageBox.Show(message, "نجاح العملية", MessageBoxButton.OK, MessageBoxImage.Information);
-            DialogResult = true;
-            Close();
+            HasSavedChanges = true;
+            MessageBox.Show(message, "تم الحفظ بنجاح", MessageBoxButton.OK, MessageBoxImage.Information);
+            await LoadCategoriesAsync(selectedCat.CategoryID);
         }
 
-        private void BtnCancel_Click(object sender, RoutedEventArgs e)
+        private void BtnClose_Click(object sender, RoutedEventArgs e)
         {
-            DialogResult = false;
+            DialogResult = HasSavedChanges;
             Close();
         }
     }

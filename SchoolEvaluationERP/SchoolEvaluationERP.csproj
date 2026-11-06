@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <NuGetAudit>false</NuGetAudit>
     <ApplicationTitle>نظام تقييم الموظفين والحوافز الشهرية</ApplicationTitle>
   </PropertyGroup>
 

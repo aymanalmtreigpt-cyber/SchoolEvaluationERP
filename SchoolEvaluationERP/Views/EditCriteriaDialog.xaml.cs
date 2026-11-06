@@ -1,12 +1,13 @@
-﻿using System;
+using System;
 using System.Globalization;
 using System.Windows;
+using SchoolEvaluationERP.Models;
 
 namespace SchoolEvaluationERP.Views
 {
     public partial class EditCriteriaDialog : Window
     {
-        private readonly decimal _otherColumnsSum;
+        private readonly int _otherColumnsSum;
 
         public string CriteriaTitleResult { get; private set; } = string.Empty;
         public decimal MaxScoreResult { get; private set; }
@@ -15,14 +16,14 @@ namespace SchoolEvaluationERP.Views
         public EditCriteriaDialog(string currentTitle, decimal currentScore, decimal otherColumnsSum, bool canDeleteColumn)
         {
             InitializeComponent();
-            _otherColumnsSum = otherColumnsSum;
+            _otherColumnsSum = (int)Math.Round(otherColumnsSum, 0, MidpointRounding.AwayFromZero);
 
             TxtCriteriaTitle.Text = currentTitle;
-            TxtMaxScore.Text = currentScore.ToString("0.##", CultureInfo.InvariantCulture);
+            TxtMaxScore.Text = Math.Round(currentScore, 0, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture);
             BtnDeleteCol.Visibility = canDeleteColumn ? Visibility.Visible : Visibility.Collapsed;
 
-            decimal remainingAllowed = Math.Max(0m, 100m - _otherColumnsSum);
-            TxtRemainingHint.Text = $"مجموع الأعمدة الأخرى حالياً: ({_otherColumnsSum:0.##}) درجة — المتبقي للوصول إلى 100 هو: ({remainingAllowed:0.##}) درجة.";
+            int remainingAllowed = Math.Max(0, 100 - _otherColumnsSum);
+            TxtRemainingHint.Text = $"مجموع الأعمدة الأخرى حالياً: ({_otherColumnsSum}) درجة — المتبقي للوصول إلى 100 هو: ({remainingAllowed}) درجة.";
 
             Loaded += (_, _) =>
             {
@@ -33,8 +34,8 @@ namespace SchoolEvaluationERP.Views
 
         private void BtnUseRemaining_Click(object sender, RoutedEventArgs e)
         {
-            decimal remaining = Math.Max(0m, 100m - _otherColumnsSum);
-            TxtMaxScore.Text = remaining.ToString("0.##", CultureInfo.InvariantCulture);
+            int remaining = Math.Max(0, 100 - _otherColumnsSum);
+            TxtMaxScore.Text = remaining.ToString(CultureInfo.InvariantCulture);
         }
 
         private void BtnSave_Click(object sender, RoutedEventArgs e)
@@ -46,10 +47,10 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            string normalizedScore = TxtMaxScore.Text.Trim().Replace(',', '.');
-            if (!decimal.TryParse(normalizedScore, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal score) || score < 0m || score > 100m)
+            string normalizedScore = WeeklyScoreRowViewModel.NormalizeAsciiDigits(TxtMaxScore.Text.Trim());
+            if (!int.TryParse(normalizedScore, NumberStyles.Integer, CultureInfo.InvariantCulture, out int score) || score < 0 || score > 100)
             {
-                MessageBox.Show("يرجى إدخال درجة صحيحة بين 0 و 100.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("يرجى إدخال درجة صحيحة بدون كسور بين 0 و 100.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
@@ -13,16 +13,16 @@ namespace SchoolEvaluationERP.Views
 {
     public partial class FinalReportView : UserControl
     {
-        private readonly FinalReportService _reportService;
-        private readonly MasterDataService _masterService;
+        private readonly FinalReportService _reportService = new();
+        private readonly MasterDataService _masterService = new();
         private MonthlyFinalReportSummary? _currentReport;
         private bool _isInitializing;
 
         public FinalReportView()
         {
+            _isInitializing = true;
             InitializeComponent();
-            _reportService = new FinalReportService();
-            _masterService = new MasterDataService();
+            _isInitializing = false;
 
             Loaded += async (_, _) =>
             {
@@ -71,7 +71,7 @@ namespace SchoolEvaluationERP.Views
 
         private async Task RefreshReportAsync()
         {
-            if (_isInitializing) return;
+            if (_isInitializing || !IsLoaded) return;
             if (CmbYear.SelectedItem is not int year || CmbMonth.SelectedValue is not int month)
                 return;
 
@@ -160,7 +160,7 @@ namespace SchoolEvaluationERP.Views
                     _reportService.ExportMonthlyReportToExcel(_currentReport, sfd.FileName);
 
                     var openNow = MessageBox.Show(
-                        $"تم تصدير ملف الإكسل (ورقة القيد المحاسبي + ورقة تفاصيل الأسابيع) بنجاح في المسار:\n{sfd.FileName}\n\nهل تريد فتح ملف الإكسل الآن؟",
+                        $"تم تصدير ملف الإكسل (ورقة القيد المحاسبي + ورقة تفاصيل التقييم الشهري) بنجاح في المسار:\n{sfd.FileName}\n\nهل تريد فتح ملف الإكسل الآن؟",
                         "تم التصدير إلى Excel",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Information);

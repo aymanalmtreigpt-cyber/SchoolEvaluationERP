@@ -48,11 +48,11 @@
                             Style="{StaticResource SidebarNavButton}" Tag="MasterData"
                             Click="NavButton_Click"/>
 
-                    <Button x:Name="NavTemplates" Content="📝  2. قوالب التقييم (A4)"
+                    <Button x:Name="NavTemplates" Content="📝  2. قوالب التقييم (A4 / Excel)"
                             Style="{StaticResource SidebarNavButton}" Tag="Templates"
                             Click="NavButton_Click"/>
 
-                    <Button x:Name="NavScoreEntry" Content="✅  3. إدخال التقييمات الأسبوعية"
+                    <Button x:Name="NavScoreEntry" Content="✅  3. إدخال التقييمات الشهرية"
                             Style="{StaticResource SidebarNavButton}" Tag="ScoreEntry"
                             Click="NavButton_Click"/>
 

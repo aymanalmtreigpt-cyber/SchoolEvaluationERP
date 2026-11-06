@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -15,7 +15,7 @@ namespace SchoolEvaluationERP.Views
 {
     public partial class TemplatesView : UserControl
     {
-        private readonly TemplateService _service;
+        private readonly TemplateService _service = new();
         private TemplateFullModel? _currentTemplate;
         private TemplateSheetModel? _activeSheet;
         private List<SheetEmployeeRowModel> _availableCategoryEmployees = new();
@@ -29,7 +29,6 @@ namespace SchoolEvaluationERP.Views
         public TemplatesView()
         {
             InitializeComponent();
-            _service = new TemplateService();
 
             Loaded += async (_, _) =>
             {
@@ -47,6 +46,7 @@ namespace SchoolEvaluationERP.Views
 
         private async Task RefreshSavedTemplatesGridAsync()
         {
+            if (!IsLoaded) return;
             string search = TxtSearchTemplateEvaluator.Text.Trim();
             var list = await _service.GetCurrentTemplatesAsync(search);
             GridSavedTemplates.ItemsSource = list;
@@ -140,12 +140,12 @@ namespace SchoolEvaluationERP.Views
             var evaluators = await _service.SearchEvaluatorsAsync();
             if (evaluators.Count == 0)
             {
-                MessageBox.Show("يرجى إضافة أسماء المقيمين في (1. صفحة الأساسيات) أولاً قبل إنشاء قوالب التقييم.", "تنبيه خطوة سابقة", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show("يرجى إضافة مجموعات وأسماء المقيمين في (1. صفحة الأساسيات) أولاً قبل إنشاء قوالب التقييم.", "تنبيه خطوة سابقة", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            var categories = await _service.GetDistinctCategoryNamesForEvaluatorAsync(0);
-            if (categories.Count == 0)
+            bool hasAnyCategories = await _service.HasAnyActiveCategoriesAsync();
+            if (!hasAnyCategories)
             {
                 MessageBox.Show("يرجى إنشاء فئة واحدة على الأقل في (1. صفحة الأساسيات) قبل إنشاء قوالب التقييم.", "تنبيه خطوة سابقة", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
@@ -161,6 +161,17 @@ namespace SchoolEvaluationERP.Views
 
             var chosenEvaluator = evalDlg.SelectedEvaluator;
 
+            var evaluatorCategories = await _service.GetCategoriesForEvaluatorAsync(chosenEvaluator.EvaluatorID);
+            if (evaluatorCategories.Count == 0)
+            {
+                MessageBox.Show(
+                    $"مجموعة المقيم ({chosenEvaluator.EvaluatorName}) غير مخصصة لأي فئة حالياً في (1. صفحة الأساسيات).\nيرجى تخصيص الدرجات للفئات من تبويب (المقيمون وتخصيص الدرجات) أولاً.",
+                    "لا توجد فئات مخصصة للمقيم",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
             var sheetDlg = new AddSheetDialog(chosenEvaluator.EvaluatorID, nextSheetNumber: 1)
             {
                 Owner = Window.GetWindow(this)
@@ -175,12 +186,19 @@ namespace SchoolEvaluationERP.Views
                 TemplateGroupGuid = Guid.NewGuid(),
                 EvaluatorID = chosenEvaluator.EvaluatorID,
                 EvaluatorName = chosenEvaluator.EvaluatorName,
+                GroupName = chosenEvaluator.GroupName,
                 VersionNumber = 1
             };
 
             _isReadOnlyViewMode = false;
 
-            var firstSheet = TemplateSheetModel.CreateDefault(sheetDlg.EnteredSheetName, sheetDlg.SelectedCategoryName, 1);
+            var firstSheet = TemplateSheetModel.CreateDefault(
+                sheetDlg.EnteredSheetName,
+                sheetDlg.SelectedCategoryId,
+                sheetDlg.SelectedCategoryName,
+                sheetDlg.SelectedBranchId,
+                sheetDlg.SelectedBranchName,
+                1);
             _currentTemplate.Sheets.Add(firstSheet);
 
             MainTemplatesTabControl.SelectedItem = TabTemplateDesigner;
@@ -199,6 +217,21 @@ namespace SchoolEvaluationERP.Views
             if (fullModel != null)
             {
                 ExportTemplateToPdfWithDialog(fullModel);
+            }
+        }
+
+        private async void BtnExportSelectedTemplateExcel_Click(object sender, RoutedEventArgs e)
+        {
+            if (GridSavedTemplates.SelectedItem is not TemplateSummaryDto selected)
+            {
+                MessageBox.Show("يرجى تحديد قالب من الجدول لاستخراجه بصيغة Excel.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var fullModel = await _service.GetTemplateFullDetailsAsync(selected.TemplateID);
+            if (fullModel != null)
+            {
+                ExportTemplateToExcelWithDialog(fullModel);
             }
         }
 
@@ -256,6 +289,7 @@ namespace SchoolEvaluationERP.Views
             PanelSheetManageButtons.IsEnabled = false;
             BtnDesignerSaveTemplate.IsEnabled = false;
             BtnDesignerPrintPdf.IsEnabled = false;
+            BtnDesignerExportExcel.IsEnabled = false;
             StackInteractiveColumns.Children.Clear();
             StackSheetTabs.Children.Clear();
             GridSheetPreview.Columns.Clear();
@@ -276,21 +310,24 @@ namespace SchoolEvaluationERP.Views
             BtnDesignerSaveTemplate.IsEnabled = canEditNow;
             BtnDesignerSaveTemplate.Visibility = canEditNow ? Visibility.Visible : Visibility.Collapsed;
             BtnDesignerPrintPdf.IsEnabled = true;
+            BtnDesignerExportExcel.IsEnabled = true;
 
             BadgeReadOnlyMode.Visibility = canEditNow ? Visibility.Collapsed : Visibility.Visible;
 
+            string groupInfo = string.IsNullOrWhiteSpace(_currentTemplate.GroupName) ? "" : $" [{_currentTemplate.GroupName}]";
             string modeTitle = _currentTemplate.TemplateID == 0
-                ? $"إنشاء قالب جديد — المقيم: {_currentTemplate.EvaluatorName}"
+                ? $"إنشاء قالب جديد — المقيم: {_currentTemplate.EvaluatorName}{groupInfo}"
                 : canEditNow
-                    ? $"تعديل قالب المقيم: {_currentTemplate.EvaluatorName} (النسخة الحالية v{_currentTemplate.VersionNumber})"
-                    : $"عرض قالب المقيم: {_currentTemplate.EvaluatorName} (النسخة v{_currentTemplate.VersionNumber})";
+                    ? $"تعديل قالب المقيم: {_currentTemplate.EvaluatorName}{groupInfo} (النسخة الحالية v{_currentTemplate.VersionNumber})"
+                    : $"عرض قالب المقيم: {_currentTemplate.EvaluatorName}{groupInfo} (النسخة v{_currentTemplate.VersionNumber})";
 
             TxtDesignerHeaderTitle.Text = modeTitle;
-            TxtActiveSheetCategoryBadge.Text = $"الورقة النشطة: {_activeSheet.SheetName}  |  الفئة: {_activeSheet.TargetCategoryName}";
-            BadgeSheetCategory.Visibility = Visibility.Collapsed;
+            TxtActiveSheetCategoryBadge.Text = $"الورقة النشطة: {_activeSheet.SheetName}  |  الفئة والفرع: {_activeSheet.CategoryWithBranchDisplay}";
+            BadgeSheetCategory.Visibility = Visibility.Visible;
 
-            _availableCategoryEmployees = await _service.GetEmployeesByCategoryNameAsync(
-                _activeSheet.TargetCategoryName,
+            _availableCategoryEmployees = await _service.GetEligibleEmployeesForSheetAsync(
+                _activeSheet.TargetCategoryID,
+                _activeSheet.TargetBranchID,
                 _currentTemplate.EvaluatorID);
 
             RefreshAvailableEmployeesCombo();
@@ -302,7 +339,10 @@ namespace SchoolEvaluationERP.Views
         private void RefreshAvailableEmployeesCombo()
         {
             if (_activeSheet == null) return;
-            var addedIds = _currentTemplate != null ? _currentTemplate.Sheets.SelectMany(s => s.EmployeeRows).Select(e => e.EmployeeID).ToHashSet() : _activeSheet.EmployeeRows.Select(e => e.EmployeeID).ToHashSet();
+            var addedIds = _currentTemplate != null
+                ? _currentTemplate.Sheets.SelectMany(s => s.EmployeeRows).Select(e => e.EmployeeID).ToHashSet()
+                : _activeSheet.EmployeeRows.Select(e => e.EmployeeID).ToHashSet();
+
             var remaining = _availableCategoryEmployees.Where(e => !addedIds.Contains(e.EmployeeID)).ToList();
 
             CmbSearchCategoryEmployees.ItemsSource = remaining;
@@ -311,7 +351,7 @@ namespace SchoolEvaluationERP.Views
             else
                 CmbSearchCategoryEmployees.Text = string.Empty;
 
-            BtnAddAllCategoryEmployees.Content = $"⚡ إدراج جميع موظفي فئة ({_activeSheet.TargetCategoryName}) المتبقين ({remaining.Count})";
+            BtnAddAllCategoryEmployees.Content = $"⚡ إدراج جميع الموظفين المتبقين ({remaining.Count})";
         }
 
         private void RebuildInteractiveCriteriaStrip(bool canEditNow)
@@ -337,14 +377,14 @@ namespace SchoolEvaluationERP.Views
                 BannerSheetCriteriaSum.Background = new SolidColorBrush(Color.FromRgb(255, 251, 235));
                 BannerSheetCriteriaSum.BorderBrush = new SolidColorBrush(Color.FromRgb(253, 230, 138));
                 TxtSheetCriteriaSum.Foreground = new SolidColorBrush(Color.FromRgb(180, 83, 9));
-                TxtSheetCriteriaSum.Text = $"مجموع درجات أعمدة الورقة: {total:0.##} من 100 (المتبقي: {diff:0.##} درجة)";
+                TxtSheetCriteriaSum.Text = $"مجموع درجات أعمدة الورقة: {total:0} من 100 (المتبقي: {diff:0} درجة)";
             }
             else
             {
                 BannerSheetCriteriaSum.Background = new SolidColorBrush(Color.FromRgb(254, 242, 242));
                 BannerSheetCriteriaSum.BorderBrush = new SolidColorBrush(Color.FromRgb(254, 202, 202));
                 TxtSheetCriteriaSum.Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28));
-                TxtSheetCriteriaSum.Text = $"⚠ المجموع تجاوز 100! الحالي: {total:0.##} من 100 (الزيادة: {Math.Abs(diff):0.##})";
+                TxtSheetCriteriaSum.Text = $"⚠ المجموع تجاوز 100! الحالي: {total:0} من 100 (الزيادة: {Math.Abs(diff):0})";
             }
 
             if (canEditNow)
@@ -384,7 +424,7 @@ namespace SchoolEvaluationERP.Views
                 });
                 stack.Children.Add(new TextBlock
                 {
-                    Text = $"الدرجة: {colModel.MaxScore:0.##} من 100",
+                    Text = $"الدرجة: {colModel.MaxScore:0} من 100",
                     FontSize = 11.5,
                     FontWeight = FontWeights.SemiBold,
                     Foreground = colModel.MaxScore > 0
@@ -489,14 +529,14 @@ namespace SchoolEvaluationERP.Views
                 return;
 
             int count = _activeSheet.CriteriaColumns.Count;
-            decimal baseShare = Math.Floor((100m / count) * 100m) / 100m;
-            decimal distributed = 0m;
+            int baseShare = 100 / count;
+            int distributed = 0;
 
             for (int i = 0; i < count; i++)
             {
                 if (i == count - 1)
                 {
-                    _activeSheet.CriteriaColumns[i].MaxScore = 100m - distributed;
+                    _activeSheet.CriteriaColumns[i].MaxScore = 100 - distributed;
                 }
                 else
                 {
@@ -531,7 +571,7 @@ namespace SchoolEvaluationERP.Views
                 Header = "الاسم التقييمي للموظف",
                 Binding = new System.Windows.Data.Binding("EvaluationName"),
                 ElementStyle = wrapStyle,
-                Width = 210
+                Width = 200
             });
 
             GridSheetPreview.Columns.Add(new DataGridTextColumn
@@ -539,15 +579,23 @@ namespace SchoolEvaluationERP.Views
                 Header = "الفرع",
                 Binding = new System.Windows.Data.Binding("BranchName"),
                 ElementStyle = wrapStyle,
-                Width = 95
+                Width = 85
             });
 
             GridSheetPreview.Columns.Add(new DataGridTextColumn
             {
-                Header = "الوظيفة",
-                Binding = new System.Windows.Data.Binding("JobTitle"),
+                Header = "الوظيفة ونوعها",
+                Binding = new System.Windows.Data.Binding("FullJobDisplay"),
                 ElementStyle = wrapStyle,
-                Width = 95
+                Width = 140
+            });
+
+            GridSheetPreview.Columns.Add(new DataGridTextColumn
+            {
+                Header = "الحافز",
+                Binding = new System.Windows.Data.Binding("IncentiveBadgeDisplay"),
+                ElementStyle = wrapStyle,
+                Width = 80
             });
 
             for (int i = 0; i < _activeSheet.CriteriaColumns.Count; i++)
@@ -557,7 +605,7 @@ namespace SchoolEvaluationERP.Views
 
                 var headerTextBlock = new TextBlock
                 {
-                    Text = $"{crit.CriteriaTitle} ({crit.MaxScore:0.##})",
+                    Text = $"{crit.CriteriaTitle} ({crit.MaxScore:0})",
                     TextWrapping = TextWrapping.Wrap,
                     TextAlignment = TextAlignment.Center,
                     FontWeight = FontWeights.Bold,
@@ -611,13 +659,17 @@ namespace SchoolEvaluationERP.Views
 
             if (empToAdd == null)
             {
-                MessageBox.Show($"يرجى اختيار موظف من قائمة موظفي فئة ({_activeSheet.TargetCategoryName}).", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"يرجى اختيار موظف مسند من قائمة ({_activeSheet.CategoryWithBranchDisplay}).", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            if (_activeSheet.EmployeeRows.Any(x => x.EmployeeID == empToAdd.EmployeeID))
+            bool alreadyInAnySheet = _currentTemplate != null
+                ? _currentTemplate.Sheets.Any(s => s.EmployeeRows.Any(x => x.EmployeeID == empToAdd.EmployeeID))
+                : _activeSheet.EmployeeRows.Any(x => x.EmployeeID == empToAdd.EmployeeID);
+
+            if (alreadyInAnySheet)
             {
-                MessageBox.Show($"الموظف ({empToAdd.EvaluationName}) مضاف بالفعل في هذه الورقة.", "موجود مسبقاً", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"الموظف ({empToAdd.EvaluationName}) مضاف بالفعل داخل هذا القالب.", "موجود مسبقاً", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -633,12 +685,15 @@ namespace SchoolEvaluationERP.Views
         {
             if (_activeSheet == null || _isReadOnlyViewMode) return;
 
-            var existingIds = _currentTemplate != null ? _currentTemplate.Sheets.SelectMany(s => s.EmployeeRows).Select(x => x.EmployeeID).ToHashSet() : _activeSheet.EmployeeRows.Select(x => x.EmployeeID).ToHashSet();
+            var existingIds = _currentTemplate != null
+                ? _currentTemplate.Sheets.SelectMany(s => s.EmployeeRows).Select(x => x.EmployeeID).ToHashSet()
+                : _activeSheet.EmployeeRows.Select(x => x.EmployeeID).ToHashSet();
+
             var toAdd = _availableCategoryEmployees.Where(x => !existingIds.Contains(x.EmployeeID)).ToList();
 
             if (toAdd.Count == 0)
             {
-                MessageBox.Show($"جميع موظفي فئة ({_activeSheet.TargetCategoryName}) مضافون بالفعل في هذه الورقة.", "مكتمل", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show($"جميع الموظفين المستمرين المسندين لهذا المقيم في ({_activeSheet.CategoryWithBranchDisplay}) مضافون بالفعل في هذا القالب.", "مكتمل", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
@@ -689,7 +744,7 @@ namespace SchoolEvaluationERP.Views
                 string statusIcon = isValid100 ? "✔" : "⚠";
                 var tabBtn = new Button
                 {
-                    Content = $"{statusIcon}  {sheet.SheetName} ({sheet.TargetCategoryName}) [{sheet.EmployeeRows.Count} موظف]",
+                    Content = $"{statusIcon}  {sheet.SheetName} ({sheet.CategoryWithBranchDisplay}) [{sheet.EmployeeRows.Count} موظف]",
                     Height = 34,
                     Padding = new Thickness(14, 0, 14, 0),
                     Margin = new Thickness(0, 0, 8, 0),
@@ -728,7 +783,10 @@ namespace SchoolEvaluationERP.Views
             {
                 var newSheet = TemplateSheetModel.CreateDefault(
                     dlg.EnteredSheetName,
+                    dlg.SelectedCategoryId,
                     dlg.SelectedCategoryName,
+                    dlg.SelectedBranchId,
+                    dlg.SelectedBranchName,
                     _currentTemplate.Sheets.Count + 1);
 
                 _currentTemplate.Sheets.Add(newSheet);
@@ -744,28 +802,53 @@ namespace SchoolEvaluationERP.Views
                 _currentTemplate.EvaluatorID,
                 _activeSheet.SortOrder,
                 _activeSheet.SheetName,
-                _activeSheet.TargetCategoryName)
+                _activeSheet.TargetCategoryID,
+                _activeSheet.TargetCategoryName,
+                _activeSheet.TargetBranchID)
             {
                 Owner = Window.GetWindow(this)
             };
 
             if (dlg.ShowDialog() == true)
             {
-                bool categoryChanged = !string.Equals(_activeSheet.TargetCategoryName, dlg.SelectedCategoryName, StringComparison.OrdinalIgnoreCase);
+                bool categoryChanged = _activeSheet.TargetCategoryID != dlg.SelectedCategoryId;
+                bool narrowedToSpecificBranch = !categoryChanged
+                    && dlg.SelectedBranchId.HasValue
+                    && dlg.SelectedBranchId.Value > 0
+                    && _activeSheet.EmployeeRows.Any(emp => emp.BranchID != dlg.SelectedBranchId.Value);
+
                 if (categoryChanged && _activeSheet.EmployeeRows.Count > 0)
                 {
                     var confirm = MessageBox.Show(
                         "تغيير فئة الورقة سيؤدي إلى تفريغ قائمة الموظفين المضافين حالياً في هذه الورقة لأنهم يتبعون الفئة السابقة. هل تريد المتابعة؟",
-                        "تأكيد تغيير فئة الورقة",
+                        "تأكيد تغيير الفئة",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Warning);
 
                     if (confirm != MessageBoxResult.Yes) return;
                     _activeSheet.EmployeeRows.Clear();
                 }
+                else if (narrowedToSpecificBranch)
+                {
+                    var confirm = MessageBox.Show(
+                        $"تحديد فرع ({dlg.SelectedBranchName}) فقط سيزيل من هذه الورقة الموظفين التابعين للفروع الأخرى. هل تريد المتابعة؟",
+                        "تأكيد تحديد الفرع",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning);
+
+                    if (confirm != MessageBoxResult.Yes) return;
+
+                    var toRemove = _activeSheet.EmployeeRows.Where(emp => emp.BranchID != dlg.SelectedBranchId!.Value).ToList();
+                    foreach (var r in toRemove)
+                        _activeSheet.EmployeeRows.Remove(r);
+                    _activeSheet.ReindexOrders();
+                }
 
                 _activeSheet.SheetName = dlg.EnteredSheetName;
+                _activeSheet.TargetCategoryID = dlg.SelectedCategoryId;
                 _activeSheet.TargetCategoryName = dlg.SelectedCategoryName;
+                _activeSheet.TargetBranchID = dlg.SelectedBranchId;
+                _activeSheet.TargetBranchName = dlg.SelectedBranchName;
                 await ActivateSheetInDesignerAsync(_activeSheet);
             }
         }
@@ -821,6 +904,55 @@ namespace SchoolEvaluationERP.Views
             ExportTemplateToPdfWithDialog(_currentTemplate);
         }
 
+        private void BtnDesignerExportExcel_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentTemplate == null) return;
+            ExportTemplateToExcelWithDialog(_currentTemplate);
+        }
+
+        private void ExportTemplateToExcelWithDialog(TemplateFullModel templateToExport)
+        {
+            if (templateToExport.Sheets.Count == 0)
+            {
+                MessageBox.Show("لا توجد أوراق في القالب لاستخراجها.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var sfd = new SaveFileDialog
+            {
+                Title = "استخراج قالب التقييم الشهري بصيغة Excel",
+                Filter = "Excel Workbook (*.xlsx)|*.xlsx",
+                FileName = $"قالب_تقييم_{templateToExport.EvaluatorName}_v{templateToExport.VersionNumber}.xlsx"
+            };
+
+            if (sfd.ShowDialog() == true)
+            {
+                try
+                {
+                    TemplateExcelExportService.GenerateTemplateExcel(templateToExport, sfd.FileName);
+
+                    var openNow = MessageBox.Show(
+                        $"تم استخراج قالب التقييم بصيغة Excel بنجاح في المسار:\n{sfd.FileName}\n\n(يمكنك تعبئة الدرجات في هذا الملف ثم رفعه مباشرة في شاشة إدخال التقييمات الشهرية).\nهل تريد فتح ملف الإكسل الآن؟",
+                        "تم استخراج القالب (Excel)",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Information);
+
+                    if (openNow == MessageBoxResult.Yes)
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = sfd.FileName,
+                            UseShellExecute = true
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"حدث خطأ أثناء توليد ملف الإكسل:\n{ex.Message}", "خطأ تصدير", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+        }
+
         private void ExportTemplateToPdfWithDialog(TemplateFullModel templateToPrint)
         {
             if (templateToPrint.Sheets.Count == 0)
@@ -831,7 +963,7 @@ namespace SchoolEvaluationERP.Views
 
             var sfd = new SaveFileDialog
             {
-                Title = "حفظ وطباعة استمارة التقييم الأسبوعي بحجم A4",
+                Title = "حفظ وطباعة استمارة التقييم الشهري بحجم A4",
                 Filter = "PDF Document (*.pdf)|*.pdf",
                 FileName = $"استمارة_تقييم_{templateToPrint.EvaluatorName}_v{templateToPrint.VersionNumber}.pdf"
             };
@@ -843,7 +975,7 @@ namespace SchoolEvaluationERP.Views
                     TemplatePdfExportService.GenerateTemplateA4Pdf(templateToPrint, sfd.FileName);
 
                     var openNow = MessageBox.Show(
-                        $"تم توليد ملف الطباعة بحجم A4 الذكي بنجاح في المسار:\n{sfd.FileName}\n\nهل تريد فتح ملف الـ PDF الآن لمعاينته وطباعته؟",
+                        $"تم توليد ملف الطباعة بحجم A4 بنجاح في المسار:\n{sfd.FileName}\n\nهل تريد فتح ملف الـ PDF الآن لمعاينته وطباعته؟",
                         "جاهز للطباعة (A4)",
                         MessageBoxButton.YesNo,
                         MessageBoxImage.Information);
@@ -865,6 +997,3 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
-
-
-

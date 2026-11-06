@@ -1,93 +1,193 @@
-﻿<Window x:Class="SchoolEvaluationERP.Views.EmployeeDialog"
+<Window x:Class="SchoolEvaluationERP.Views.EmployeeDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="بيانات الموظف وربط الفئة والمقيمين"
-        Width="560" SizeToContent="Height"
+        Title="بيانات الموظف وتحديد الهيكل الوظيفي والمقيمين"
+        Width="720" Height="730"
+        MinWidth="640" MinHeight="580"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
         Background="{StaticResource AppBgBrush}"
         FlowDirection="RightToLeft"
         FontFamily="Segoe UI">
 
-    <Grid Margin="18">
-        <Border Style="{StaticResource CardStyle}" Padding="24">
+    <Grid Margin="16">
+        <Border Style="{StaticResource CardStyle}" Padding="20">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
                 <!-- العنوان -->
-                <StackPanel Grid.Row="0" Margin="0,0,0,14">
+                <StackPanel Grid.Row="0" Margin="0,0,0,12">
                     <TextBlock x:Name="TxtDialogTitle" Text="إضافة موظف جديد للنظام" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
-                    <TextBlock Text="أدخل الاسم في النظام (للقيد المحاسبي) والاسم التقييمي (لأوراق التقييم)، واختر الفرع والوظيفة والفئة ليظهر المقيمون تلقائياً." FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <TextBlock Text="أدخل بيانات الموظف وحدد الفرع والفئة والوظيفة ونوع الوظيفة وحالة الحافز والدوام، وحدد المقيمين المسؤولين عنه من كل مجموعة."
+                               FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 </StackPanel>
 
-                <!-- الحقول -->
-                <StackPanel Grid.Row="1">
-                    <!-- الاسم في النظام -->
-                    <TextBlock Text="الاسم في النظام (يظهر في عمود الحساب الدائن في القيد النهائي)" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                    <TextBox x:Name="TxtSystemName" Style="{StaticResource ModernTextBox}" Margin="0,0,0,14"
-                             ToolTip="مثال: ابتسام ابراهيم علي الزيادي - استاذة/"/>
+                <!-- جسم النموذج داخل ScrollViewer لضمان وضوح شريط الحفظ في كل الشاشات -->
+                <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+                    <StackPanel>
 
-                    <!-- الاسم التقييمي -->
-                    <Grid Margin="0,0,0,6">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Text="الاسم التقييمي (يظهر في أوراق التقييم والبحث السريع)" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                        <Button Grid.Column="1" Content="نسخ من الاسم في النظام" Style="{StaticResource SecondaryButton}" Height="26" Padding="10,0" FontSize="11.5" Click="BtnCopyFromSystemName_Click"/>
-                    </Grid>
-                    <TextBox x:Name="TxtEvaluationName" Style="{StaticResource ModernTextBox}" Margin="0,0,0,14"/>
+                        <!-- الاسم في النظام + الاسم التقييمي -->
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
 
-                    <!-- الفرع والوظيفة -->
-                    <Grid Margin="0,0,0,14">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="14"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="الاسم في النظام (للقيد المحاسبي):" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <TextBox x:Name="TxtSystemName" Style="{StaticResource ModernTextBox}"
+                                         ToolTip="مثال: ابتسام ابراهيم علي الزيادي - استاذة/"/>
+                            </StackPanel>
 
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="الفرع (مكان حساب الموظف)" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                            <ComboBox x:Name="CmbBranch" Style="{StaticResource ModernComboBox}"
-                                      DisplayMemberPath="BranchName" SelectedValuePath="BranchID"
-                                      SelectionChanged="CmbBranch_SelectionChanged"/>
-                        </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <Grid Margin="0,0,0,5">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="الاسم التقييمي (لأوراق التقييم):" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                    <Button Grid.Column="1" Content="نسخ من النظام" Style="{StaticResource SecondaryButton}"
+                                            Height="24" Padding="8,0" FontSize="11" Click="BtnCopyFromSystemName_Click"/>
+                                </Grid>
+                                <TextBox x:Name="TxtEvaluationName" Style="{StaticResource ModernTextBox}"/>
+                            </StackPanel>
+                        </Grid>
 
-                        <StackPanel Grid.Column="2">
-                            <TextBlock Text="الوظيفة" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                            <ComboBox x:Name="CmbJob" Style="{StaticResource ModernComboBox}"
-                                      DisplayMemberPath="JobTitle" SelectedValuePath="JobID"/>
-                        </StackPanel>
-                    </Grid>
+                        <!-- الفرع + الفئة -->
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
 
-                    <!-- الفئة -->
-                    <TextBlock Text="الفئة (مرتبطة بالفرع المختار)" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                    <ComboBox x:Name="CmbCategory" Style="{StaticResource ModernComboBox}"
-                              DisplayMemberPath="DisplayFullName" SelectedValuePath="CategoryID"
-                              SelectionChanged="CmbCategory_SelectionChanged" Margin="0,0,0,14"/>
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="الفرع (مكان الحساب):" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <ComboBox x:Name="CmbBranch" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="BranchName" SelectedValuePath="BranchID"/>
+                            </StackPanel>
 
-                    <!-- العرض التلقائي لأسماء المقيمين وأوزانهم فور اختيار الفئة -->
-                    <Border Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,18">
-                        <StackPanel>
-                            <TextBlock Text="👥 المقيمون المعتمدون لهذه الفئة وأوزانهم (من 100 درجة):" FontWeight="Bold" Foreground="#1E40AF" FontSize="12.5" Margin="0,0,0,4"/>
-                            <TextBlock x:Name="TxtAutoEvaluatorsPreview" Text="يرجى اختيار الفئة لعرض أسماء المقيمين وأوزانهم تلقائياً..." Foreground="#1E3A8A" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="الفئة:" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <ComboBox x:Name="CmbCategory" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="CategoryName" SelectedValuePath="CategoryID"
+                                          SelectionChanged="CmbCategory_SelectionChanged"/>
+                            </StackPanel>
+                        </Grid>
 
-                <!-- شريط أزرار الإضافة والحفظ والإلغاء (مثبت وواضح دائماً في الأسفل) -->
-                <Grid Grid.Row="2" Margin="0,4,0,0">
+                        <!-- الوظيفة + نوع الوظيفة (إلزامي دائماً) -->
+                        <Grid Margin="0,0,0,12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="الوظيفة:" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <ComboBox x:Name="CmbJob" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="JobTitle" SelectedValuePath="JobID"
+                                          SelectionChanged="CmbJob_SelectionChanged"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="نوع الوظيفة / التخصص (إلزامي دائماً):" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <ComboBox x:Name="CmbJobType" Style="{StaticResource ModernComboBox}"
+                                          DisplayMemberPath="JobTypeName" SelectedValuePath="JobTypeID"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- الحافز + حالة الدوام (مستمر / منقطع) -->
+                        <Grid Margin="0,0,0,14">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="12"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0">
+                                <TextBlock Text="استحقاق الحافز الشهري:" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <ComboBox x:Name="CmbHasIncentive" Style="{StaticResource ModernComboBox}">
+                                    <ComboBoxItem Content="بحافز ✔ (يصرف له حافز إذا تجاوز 80%)" Tag="True" IsSelected="True"/>
+                                    <ComboBoxItem Content="بدون حافز (تقييم أداء فقط — الحافز = 0)" Tag="False"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="حالة الدوام (مستمر / منقطع):" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                                <ComboBox x:Name="CmbIsContinuing" Style="{StaticResource ModernComboBox}">
+                                    <ComboBoxItem Content="مستمر 🟢 (يظهر في أوراق التقييمات والتقرير)" Tag="True" IsSelected="True"/>
+                                    <ComboBoxItem Content="منقطع 🔴 (يختفي من أوراق التقييمات والتقرير)" Tag="False"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- قسم اختيار المقيمين المسؤولين عن الموظف حسب مجموعات الفئة -->
+                        <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="14,12" Margin="0,0,0,8">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="👥 المقيمون المسؤولون عن تقييم هذا الموظف (تغطية 100 درجة):" FontWeight="Bold" FontSize="13.5" Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center"/>
+                                    <Border Grid.Column="1" x:Name="BadgeCoverageStatus" Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1" CornerRadius="6" Padding="10,3">
+                                        <TextBlock x:Name="TxtOverallCoverageStatus" Text="اختر الفئة أولاً" FontSize="12" FontWeight="Bold" Foreground="#B45309"/>
+                                    </Border>
+                                </Grid>
+
+                                <TextBlock x:Name="TxtNoCategoryWeightsWarning"
+                                           Text="⚠ هذه الفئة لم يُخصص لها مجموعات مقيمين (100 درجة) بعد. يرجى تخصيص درجات الفئة أولاً من تبويب (المقيمون وتخصيص الدرجات)."
+                                           Foreground="#B91C1C" FontWeight="SemiBold" FontSize="12.5" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,4,0,4"/>
+
+                                <ItemsControl x:Name="ItemsEvaluatorGroups">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,9" Margin="0,0,0,8">
+                                                <StackPanel>
+                                                    <TextBlock Text="{Binding HeaderDisplay}" FontWeight="Bold" FontSize="13" Foreground="#1E3A8A" Margin="0,0,0,6"/>
+
+                                                    <ItemsControl ItemsSource="{Binding Members}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate>
+                                                                <WrapPanel Orientation="Horizontal"/>
+                                                            </ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding EvaluatorName}"
+                                                                          IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                          IsEnabled="{Binding IsCheckEnabled}"
+                                                                          FontWeight="SemiBold" FontSize="13"
+                                                                          Margin="0,0,18,6"/>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+
+                                                    <TextBlock Text="{Binding ShareStatusDisplay}" FontSize="12" Foreground="#047857" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- شريط أزرار الحفظ والإلغاء -->
+                <Grid Grid.Row="2" Margin="0,12,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="10"/>
-                        <ColumnDefinition Width="110"/>
+                        <ColumnDefinition Width="115"/>
                     </Grid.ColumnDefinitions>
 
-                    <Button Grid.Column="0" x:Name="BtnSaveEmployee" Content="➕ إضافة الموظف وحفظ البيانات"
+                    <Button Grid.Column="0" x:Name="BtnSaveEmployee" Content="💾 حفظ بيانات الموظف والمقيمين"
                             Style="{StaticResource PrimaryButton}" Height="42" FontSize="14.5" IsDefault="True"
                             Click="BtnSaveEmployee_Click"/>
 

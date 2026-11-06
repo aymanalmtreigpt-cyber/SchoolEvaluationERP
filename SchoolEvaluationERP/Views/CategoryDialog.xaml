@@ -1,85 +1,117 @@
 <Window x:Class="SchoolEvaluationERP.Views.CategoryDialog"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="تجهيز الفئة وتوزيع درجات المقيمين (100 درجة)"
-        Height="580" Width="560"
+        Title="تخصيص المقيمين ودرجات التقييم للفئات (100 درجة)"
+        Width="920" Height="640"
+        MinWidth="820" MinHeight="560"
         WindowStartupLocation="CenterOwner"
-        ResizeMode="NoResize"
         Background="{StaticResource AppBgBrush}"
         FlowDirection="RightToLeft"
         FontFamily="Segoe UI">
 
     <Grid Margin="18">
-        <Border Style="{StaticResource CardStyle}" Padding="22">
+        <Border Style="{StaticResource CardStyle}" Padding="20">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
+                <!-- العنوان الرئيسي -->
                 <StackPanel Grid.Row="0" Margin="0,0,0,14">
-                    <TextBlock x:Name="TxtDialogTitle" Text="إنشاء فئة جديدة وتوزيع درجات المقيمين" FontSize="18" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
-                    <TextBlock Text="حدد اسم الفئة والفرع، ثم اختر المقيمين عبر (CheckBox) ووزع الدرجات بينهم بحيث يكون المجموع = 100 درجة." FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <TextBlock Text="⚖ تخصيص المقيمين ودرجات التقييم للفئات (شرط المجموع = 100 درجة)" FontSize="18.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+                    <TextBlock Text="اختر الفئة من القائمة اليمنى، ثم حدد مجموعات المقيمين المسؤولة عنها وخصص درجة لكل مجموعة بحيث يساوي المجموع 100 درجة بالضبط."
+                               FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 </StackPanel>
 
-                <Grid Grid.Row="1" Margin="0,0,0,14">
+                <!-- المحتوى المقسم: قائمة الفئات يميناً + جدول مجموعات المقيمين والدرجات يساراً -->
+                <Grid Grid.Row="1">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="1.2*"/>
-                        <ColumnDefinition Width="14"/>
-                        <ColumnDefinition Width="1*"/>
+                        <ColumnDefinition Width="300"/>
+                        <ColumnDefinition Width="16"/>
+                        <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <StackPanel Grid.Column="0">
-                        <TextBlock Text="اسم الفئة (مثلاً: معلم، مشرف، إداري)" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                        <TextBox x:Name="TxtCategoryName" Style="{StaticResource ModernTextBox}"/>
-                    </StackPanel>
+                    <!-- اللوحة اليمنى: الفئات -->
+                    <Border Grid.Column="0" Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="12">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                            </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Column="2">
-                        <TextBlock Text="الفرع التابعة له الفئة" FontWeight="SemiBold" Margin="0,0,0,6"/>
-                        <ComboBox x:Name="CmbBranch" Style="{StaticResource ModernComboBox}"
-                                  DisplayMemberPath="BranchName" SelectedValuePath="BranchID"/>
-                    </StackPanel>
+                            <TextBlock Grid.Row="0" Text="🏷 الفئات المسجلة (اختر فئة):" FontWeight="Bold" FontSize="14" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,0,0,8"/>
+
+                            <DataGrid Grid.Row="1" x:Name="GridCategoriesList"
+                                      IsReadOnly="True"
+                                      SelectionMode="Single"
+                                      SelectionChanged="GridCategoriesList_SelectionChanged">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="الفئة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="125"/>
+                                    <DataGridTextColumn Header="الحالة" Binding="{Binding WeightsStatusDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+
+                    <!-- اللوحة اليسرى: مجموعات المقيمين وتخصيص الـ 100 درجة -->
+                    <Grid Grid.Column="2">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <Border Grid.Row="0" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
+                            <TextBlock x:Name="TxtSelectedCategoryTitle"
+                                       Text="الفئة المحددة: —"
+                                       FontSize="14.5" FontWeight="Bold" Foreground="#1E3A8A"/>
+                        </Border>
+
+                        <Border Grid.Row="1" x:Name="CounterBanner" Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="TxtTotalScoreStatus" Text="مجموع درجات الفئة الحالي: 0 من 100 درجة" FontWeight="Bold" Foreground="#B45309" VerticalAlignment="Center"/>
+                                <Button Grid.Column="1" Content="⚖ توزيع الـ 100 بالتساوي" Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12"
+                                        Click="BtnDistributeEqually_Click"/>
+                            </Grid>
+                        </Border>
+
+                        <DataGrid Grid.Row="2" x:Name="GridEvaluatorGroups" CanUserSortColumns="False">
+                            <DataGrid.Columns>
+                                <DataGridCheckBoxColumn Header="اختيار" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="62"/>
+                                <DataGridTextColumn Header="اسم مجموعة المقيمين" Binding="{Binding GroupName}" ElementStyle="{StaticResource WrappingCellTextStyle}" IsReadOnly="True" Width="155"/>
+                                <DataGridTextColumn Header="أعضاء المجموعة وطريقة الإسناد" Binding="{Binding GroupDisplayInfo}" ElementStyle="{StaticResource WrappingCellTextStyle}" IsReadOnly="True" Width="*"/>
+                                <DataGridTextColumn Header="الدرجة (من 100)" Binding="{Binding WeightScore, UpdateSourceTrigger=PropertyChanged}" Width="125"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+
+                        <TextBlock Grid.Row="3"
+                                   Text="💡 ملاحظة: إذا كانت المجموعة تحتوي على عدة مقيمين (مثلاً 3 مقيمين بوزن 30 درجة)، فستقسم الـ 30 درجة تلقائياً على من يتم اختيارهم لتقييم كل موظف ويؤخذ متوسطهم."
+                                   FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                    </Grid>
                 </Grid>
 
-                <Border Grid.Row="2" x:Name="CounterBanner" Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock x:Name="TxtTotalScoreStatus" Text="مجموع درجات المقيمين الحالي: 0 من 100 درجة" FontWeight="Bold" Foreground="#B45309" VerticalAlignment="Center"/>
-                        <Button Grid.Column="1" Content="توزيع بالتساوي" Style="{StaticResource SecondaryButton}" Height="28" Padding="10,0" FontSize="12" Click="BtnDistributeEqually_Click" ToolTip="توزيع الـ 100 درجة بالتساوي على المقيمين المحددين"/>
-                    </Grid>
-                </Border>
-
-                <DataGrid Grid.Row="3" x:Name="GridEvaluators" CanUserSortColumns="False">
-                    <DataGrid.Columns>
-                        <DataGridCheckBoxColumn Header="اختيار" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="65"/>
-                        <DataGridTextColumn Header="اسم المقيم" Binding="{Binding EvaluatorName}" IsReadOnly="True" Width="*"/>
-                        <DataGridTextColumn Header="الدرجة المخصصة (من 100)" Binding="{Binding WeightScore, UpdateSourceTrigger=PropertyChanged}" Width="165"/>
-                    </DataGrid.Columns>
-                </DataGrid>
-
-                <TextBlock Grid.Row="4" Text="💡 تلميح: ضع علامة صح بجانب المقيم ثم اكتب الدرجة المخصصة له في العمود المقابل (أو اضغط توزيع بالتساوي)." FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,8,0,14"/>
-
-                <Grid Grid.Row="5">
+                <!-- أزرار الحفظ والإغلاق -->
+                <Grid Grid.Row="2" Margin="0,14,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="10"/>
-                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="130"/>
                     </Grid.ColumnDefinitions>
 
-                    <Button Grid.Column="0" x:Name="BtnSaveCategory" Content="💾 حفظ الفئة واعتماد أوزان المقيمين (100 درجة)"
-                            Style="{StaticResource PrimaryButton}" IsDefault="True"
-                            Click="BtnSaveCategory_Click"/>
+                    <Button Grid.Column="0" x:Name="BtnSaveWeights" Content="💾 حفظ واعتماد درجات الفئة المحددة (100 درجة)"
+                            Style="{StaticResource PrimaryButton}" Height="42" FontSize="14.5"
+                            Click="BtnSaveWeights_Click"/>
 
-                    <Button Grid.Column="2" Content="إلغاء"
-                            Style="{StaticResource SecondaryButton}" IsCancel="True"
-                            Click="BtnCancel_Click"/>
+                    <Button Grid.Column="2" Content="إغلاق"
+                            Style="{StaticResource SecondaryButton}" Height="42" IsCancel="True"
+                            Click="BtnClose_Click"/>
                 </Grid>
             </Grid>
         </Border>
