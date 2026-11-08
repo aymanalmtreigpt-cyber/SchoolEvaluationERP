@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -217,6 +217,59 @@ namespace SchoolEvaluationERP.Views
             if (fullModel != null)
             {
                 ExportTemplateToPdfWithDialog(fullModel);
+            }
+        }
+
+        private async void BtnExportAllEvaluatorsEmployeesExcel_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var evaluatorSheets = await _service.GetAllEvaluatorsWithAssignedEmployeesAsync();
+                if (evaluatorSheets.Count == 0)
+                {
+                    MessageBox.Show(
+                        "لا يوجد مقيمون مسجلون في النظام حالياً. يرجى إضافة المقيمين في (1. صفحة الأساسيات) أولاً.",
+                        "تنبيه",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+
+                var sfd = new SaveFileDialog
+                {
+                    Title = "استخراج ملف إكسل شامل ببيانات الموظفين لكل مقيم (كل مقيم في ورقة)",
+                    Filter = "Excel Workbook (*.xlsx)|*.xlsx",
+                    FileName = $"بيانات_الموظفين_لكل_مقيم_{DateTime.Now:yyyy-MM-dd}.xlsx"
+                };
+
+                if (sfd.ShowDialog() == true)
+                {
+                    TemplateExcelExportService.GenerateAllEvaluatorsEmployeesExcel(evaluatorSheets, sfd.FileName);
+
+                    int totalSheets = evaluatorSheets.Count;
+                    var openNow = MessageBox.Show(
+                        $"تم استخراج ملف الإكسل الشامل بنجاح!\n• عدد أوراق المقيمين في الملف: ({totalSheets}) ورقة\n• المسار: {sfd.FileName}\n\nهل تريد فتح ملف الإكسل الآن؟",
+                        "تم استخراج بيانات الموظفين لكل مقيم",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Information);
+
+                    if (openNow == MessageBoxResult.Yes)
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = sfd.FileName,
+                            UseShellExecute = true
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"حدث خطأ أثناء استخراج ملف بيانات الموظفين لكل مقيم:\n{ex.Message}",
+                    "خطأ تصدير",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
             }
         }
 
@@ -997,3 +1050,4 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+

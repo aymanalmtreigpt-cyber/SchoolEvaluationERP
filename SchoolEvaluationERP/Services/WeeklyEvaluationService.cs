@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data;
@@ -246,6 +246,12 @@ namespace SchoolEvaluationERP.Services
                 FROM dbo.EvaluationScores
                 WHERE RecordID = @RecordID", new { RecordID = recordId })).ToList();
 
+            var savedAdjustments = (await conn.QueryAsync<dynamic>(@"
+                SELECT SheetID, EmployeeID, BalancingDelta
+                FROM dbo.EvaluationEmployeeAdjustments
+                WHERE RecordID = @RecordID", new { RecordID = recordId }))
+                .ToDictionary(k => ((int)k.SheetID, (int)k.EmployeeID), v => (decimal)v.BalancingDelta);
+
             var evaluatedEmpIds = savedScores.Select(s => (int)s.EmployeeID).ToHashSet();
 
             var sheets = (await conn.QueryAsync<WeeklyEntrySheetModel>(@"
@@ -313,7 +319,8 @@ namespace SchoolEvaluationERP.Services
                         }
                     }
 
-                    emp.InitializeCriteria(criteria, scoreDict);
+                    savedAdjustments.TryGetValue((sheet.SheetID, emp.EmployeeID), out decimal savedDelta);
+                    emp.InitializeCriteria(criteria, scoreDict, savedDelta);
                 }
 
                 sheet.EmployeeRows = new ObservableCollection<WeeklyScoreRowViewModel>(filteredRows);
@@ -473,8 +480,14 @@ namespace SchoolEvaluationERP.Services
                        ISNULL((
                            SELECT AVG(EmpSum.TotalRaw)
                            FROM (
-                               SELECT SUM(es2.GivenScore) AS TotalRaw
+                               SELECT CASE
+                                          WHEN SUM(es2.GivenScore) + ISNULL(MAX(adj2.BalancingDelta), 0) > 100 THEN 100
+                                          WHEN SUM(es2.GivenScore) + ISNULL(MAX(adj2.BalancingDelta), 0) < 0 THEN 0
+                                          ELSE SUM(es2.GivenScore) + ISNULL(MAX(adj2.BalancingDelta), 0)
+                                      END AS TotalRaw
                                FROM dbo.EvaluationScores es2
+                               LEFT JOIN dbo.EvaluationEmployeeAdjustments adj2
+                                   ON adj2.RecordID = es2.RecordID AND adj2.SheetID = es2.SheetID AND adj2.EmployeeID = es2.EmployeeID
                                WHERE es2.RecordID = er.RecordID
                                GROUP BY es2.SheetID, es2.EmployeeID
                            ) AS EmpSum
@@ -513,3 +526,4 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+

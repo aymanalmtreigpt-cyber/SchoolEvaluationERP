@@ -6,9 +6,9 @@
 
     <Grid Margin="6">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="1.15*"/>
-            <ColumnDefinition Width="18"/>
-            <ColumnDefinition Width="1.35*"/>
+            <ColumnDefinition Width="1.1*" MinWidth="280"/>
+            <ColumnDefinition Width="Auto"/>
+            <ColumnDefinition Width="1.4*" MinWidth="340"/>
         </Grid.ColumnDefinitions>
 
         <Border Grid.Column="0" Style="{StaticResource CardStyle}">
@@ -52,6 +52,8 @@
                 </DataGrid>
             </Grid>
         </Border>
+
+        <GridSplitter Grid.Column="1" Style="{StaticResource VerticalGridSplitterStyle}" ToolTip="اسحب لتغيير عرض قائمة المستخدمين ونموذج الصلاحيات"/>
 
         <Border Grid.Column="2" Style="{StaticResource CardStyle}">
             <Grid>
@@ -175,3 +177,4 @@
         </Border>
     </Grid>
 </UserControl>
+

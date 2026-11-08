@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -42,6 +42,7 @@ namespace SchoolEvaluationERP.Models
         private int[] _scores = Array.Empty<int>();
         private int[] _maxScores = Array.Empty<int>();
         private int[] _criteriaIds = Array.Empty<int>();
+        private decimal _balancingDelta;
 
         public int EmployeeID { get; set; }
         public int RowOrder { get; set; }
@@ -61,12 +62,56 @@ namespace SchoolEvaluationERP.Models
 
         public string IncentiveBadgeDisplay => HasIncentive ? "بحافز ✔" : "بدون حافز (أداء)";
 
-        public void InitializeCriteria(IList<CriteriaColumnModel> criteriaColumns, Dictionary<int, decimal>? savedScoresByCriteriaId = null)
+        public decimal BalancingDelta
+        {
+            get => _balancingDelta;
+            set
+            {
+                decimal clamped = Math.Clamp(Math.Round(value, 2, MidpointRounding.AwayFromZero), -100m, 100m);
+                if (_balancingDelta != clamped)
+                {
+                    _balancingDelta = clamped;
+                    OnPropertyChanged();
+                    OnPropertyChanged(nameof(BalancingDeltaText));
+                    OnPropertyChanged(nameof(BalancingDeltaDisplay));
+                    NotifyCalculatedFields();
+                }
+            }
+        }
+
+        public string BalancingDeltaText
+        {
+            get => _balancingDelta.ToString("0.##", CultureInfo.InvariantCulture);
+            set
+            {
+                string clean = NormalizeAsciiDigits((value ?? "0").Trim()).Replace(",", ".");
+                if (clean.StartsWith("+")) clean = clean[1..].Trim();
+                if (string.IsNullOrWhiteSpace(clean) || clean == "-")
+                {
+                    BalancingDelta = 0m;
+                    return;
+                }
+                if (decimal.TryParse(clean, NumberStyles.Any, CultureInfo.InvariantCulture, out decimal parsed))
+                {
+                    BalancingDelta = parsed;
+                }
+            }
+        }
+
+        public string BalancingDeltaDisplay => _balancingDelta > 0m
+            ? $"+{_balancingDelta:0.##}"
+            : $"{_balancingDelta:0.##}";
+
+        public void InitializeCriteria(
+            IList<CriteriaColumnModel> criteriaColumns,
+            Dictionary<int, decimal>? savedScoresByCriteriaId = null,
+            decimal savedBalancingDelta = 0m)
         {
             int count = criteriaColumns.Count;
             _scores = new int[count];
             _maxScores = new int[count];
             _criteriaIds = new int[count];
+            _balancingDelta = Math.Round(savedBalancingDelta, 2, MidpointRounding.AwayFromZero);
 
             for (int i = 0; i < count; i++)
             {
@@ -83,6 +128,9 @@ namespace SchoolEvaluationERP.Models
                 }
             }
 
+            OnPropertyChanged(nameof(BalancingDelta));
+            OnPropertyChanged(nameof(BalancingDeltaText));
+            OnPropertyChanged(nameof(BalancingDeltaDisplay));
             NotifyCalculatedFields();
         }
 
@@ -124,7 +172,6 @@ namespace SchoolEvaluationERP.Models
                     return;
                 }
 
-                // تحويل الأرقام الهندية/العربية إن وجدت إلى أرقام قياسية لقبول إدخال مثل ٠٥ -> 5
                 clean = NormalizeAsciiDigits(clean);
 
                 if (int.TryParse(clean, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
@@ -191,14 +238,23 @@ namespace SchoolEvaluationERP.Models
             NotifyCalculatedFields();
         }
 
-        public decimal RawTotalOutOf100 => _scores.Sum();
+        public decimal RawCriteriaSumOutOf100 => _scores.Sum();
+
+        public decimal RawTotalOutOf100 => Math.Clamp(
+            Math.Round(RawCriteriaSumOutOf100 + _balancingDelta, 2, MidpointRounding.AwayFromZero),
+            0m,
+            100m);
+
         public decimal WeightedScore => Math.Round((RawTotalOutOf100 / 100m) * EvaluatorWeight, 2, MidpointRounding.AwayFromZero);
 
-        public string RawTotalDisplay => $"{RawTotalOutOf100:0} / 100";
+        public string RawCriteriaSumDisplay => $"{RawCriteriaSumOutOf100:0} / 100";
+        public string RawTotalDisplay => $"{RawTotalOutOf100:0.##} / 100";
         public string WeightedScoreDisplay => $"{WeightedScore:0.##} من {EvaluatorWeight:0.##}";
 
         private void NotifyCalculatedFields()
         {
+            OnPropertyChanged(nameof(RawCriteriaSumOutOf100));
+            OnPropertyChanged(nameof(RawCriteriaSumDisplay));
             OnPropertyChanged(nameof(RawTotalOutOf100));
             OnPropertyChanged(nameof(WeightedScore));
             OnPropertyChanged(nameof(RawTotalDisplay));
@@ -254,6 +310,7 @@ namespace SchoolEvaluationERP.Models
         public string MonthArabicName => Services.IncentiveCalculatorService.GetArabicMonthName(EvalMonth);
         public string PeriodDisplay => $"شهر {MonthArabicName} {EvalYear} م";
         public string EvaluatorWithGroupDisplay => string.IsNullOrWhiteSpace(GroupName) ? EvaluatorName : $"{EvaluatorName} ({GroupName})";
+        public string DropdownRecordDisplay => $"{EvaluatorWithGroupDisplay} — [{EvaluatedEmployeesCount} موظف | المتوسط: {AverageRawScore:0.##}%]";
         public string VersionDisplay => $"v{VersionNumber}";
         public string AverageScoreDisplay => $"{AverageRawScore:0.##} %";
         public string CreatedAtDisplay => CreatedAt.ToString("yyyy-MM-dd hh:mm tt");

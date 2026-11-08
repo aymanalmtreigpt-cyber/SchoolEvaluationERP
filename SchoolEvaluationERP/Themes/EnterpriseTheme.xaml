@@ -18,7 +18,7 @@
     <Style x:Key="WrappingCellTextStyle" TargetType="TextBlock">
         <Setter Property="TextWrapping" Value="Wrap"/>
         <Setter Property="VerticalAlignment" Value="Center"/>
-        <Setter Property="Padding" Value="8,6"/>
+        <Setter Property="Padding" Value="8,5"/>
     </Style>
 
     <Style x:Key="CardStyle" TargetType="Border">
@@ -26,7 +26,7 @@
         <Setter Property="BorderBrush" Value="{StaticResource BorderBrushLight}"/>
         <Setter Property="BorderThickness" Value="1"/>
         <Setter Property="CornerRadius" Value="10"/>
-        <Setter Property="Padding" Value="20"/>
+        <Setter Property="Padding" Value="16"/>
         <Setter Property="Effect">
             <Setter.Value>
                 <DropShadowEffect Color="#000000" BlurRadius="12" ShadowDepth="2" Opacity="0.04"/>
@@ -34,10 +34,70 @@
         </Setter>
     </Style>
 
+    <!-- فواصل مرنة (GridSplitter) لتغيير أحجام الأقسام والجداول بالسحب بالماوس -->
+    <Style x:Key="VerticalGridSplitterStyle" TargetType="GridSplitter">
+        <Setter Property="Width" Value="10"/>
+        <Setter Property="HorizontalAlignment" Value="Center"/>
+        <Setter Property="VerticalAlignment" Value="Stretch"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Cursor" Value="SizeWE"/>
+        <Setter Property="ShowsPreview" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="GridSplitter">
+                    <Grid Background="Transparent">
+                        <Border x:Name="line" Width="3" CornerRadius="1.5" Background="#CBD5E1" VerticalAlignment="Stretch" HorizontalAlignment="Center" Margin="0,8"/>
+                        <Border x:Name="grip" Width="4" Height="36" CornerRadius="2" Background="#94A3B8" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="line" Property="Background" Value="#60A5FA"/>
+                            <Setter TargetName="grip" Property="Background" Value="#2563EB"/>
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="line" Property="Background" Value="#2563EB"/>
+                            <Setter TargetName="grip" Property="Background" Value="#1D4ED8"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="HorizontalGridSplitterStyle" TargetType="GridSplitter">
+        <Setter Property="Height" Value="10"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Cursor" Value="SizeNS"/>
+        <Setter Property="ShowsPreview" Value="False"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="GridSplitter">
+                    <Grid Background="Transparent">
+                        <Border x:Name="line" Height="3" CornerRadius="1.5" Background="#CBD5E1" HorizontalAlignment="Stretch" VerticalAlignment="Center" Margin="8,0"/>
+                        <Border x:Name="grip" Width="36" Height="4" CornerRadius="2" Background="#94A3B8" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="line" Property="Background" Value="#60A5FA"/>
+                            <Setter TargetName="grip" Property="Background" Value="#2563EB"/>
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="line" Property="Background" Value="#2563EB"/>
+                            <Setter TargetName="grip" Property="Background" Value="#1D4ED8"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="ModernTextBox" TargetType="TextBox">
+        <Setter Property="MinHeight" Value="36"/>
         <Setter Property="Height" Value="38"/>
-        <Setter Property="Padding" Value="10,6"/>
-        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Padding" Value="10,5"/>
+        <Setter Property="FontSize" Value="13.5"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
         <Setter Property="Background" Value="#F8FAFC"/>
@@ -70,9 +130,10 @@
     </Style>
 
     <Style x:Key="ModernPasswordBox" TargetType="PasswordBox">
+        <Setter Property="MinHeight" Value="36"/>
         <Setter Property="Height" Value="38"/>
-        <Setter Property="Padding" Value="10,6"/>
-        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Padding" Value="10,5"/>
+        <Setter Property="FontSize" Value="13.5"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
         <Setter Property="Background" Value="#F8FAFC"/>
@@ -105,9 +166,10 @@
     </Style>
 
     <Style x:Key="ModernComboBox" TargetType="ComboBox">
+        <Setter Property="MinHeight" Value="36"/>
         <Setter Property="Height" Value="38"/>
-        <Setter Property="Padding" Value="10,6"/>
-        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="Padding" Value="10,5"/>
+        <Setter Property="FontSize" Value="13.5"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
         <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}"/>
         <Setter Property="Background" Value="#F8FAFC"/>
@@ -119,11 +181,12 @@
     <Style x:Key="PrimaryButton" TargetType="Button">
         <Setter Property="Background" Value="{StaticResource PrimaryBrush}"/>
         <Setter Property="Foreground" Value="White"/>
-        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="FontSize" Value="13.5"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
-        <Setter Property="Height" Value="40"/>
-        <Setter Property="Padding" Value="18,0"/>
+        <Setter Property="MinHeight" Value="36"/>
+        <Setter Property="Height" Value="38"/>
+        <Setter Property="Padding" Value="16,0"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="BorderThickness" Value="0"/>
         <Setter Property="Template">
@@ -153,6 +216,7 @@
         <Setter Property="FontSize" Value="13"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
+        <Setter Property="MinHeight" Value="36"/>
         <Setter Property="Height" Value="38"/>
         <Setter Property="Padding" Value="14,0"/>
         <Setter Property="Cursor" Value="Hand"/>
@@ -197,12 +261,13 @@
     <Style x:Key="SidebarNavButton" TargetType="Button">
         <Setter Property="Background" Value="Transparent"/>
         <Setter Property="Foreground" Value="#CBD5E1"/>
-        <Setter Property="FontSize" Value="14"/>
+        <Setter Property="FontSize" Value="13.5"/>
         <Setter Property="FontWeight" Value="SemiBold"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
-        <Setter Property="Height" Value="46"/>
-        <Setter Property="Margin" Value="10,3"/>
-        <Setter Property="Padding" Value="14,0"/>
+        <Setter Property="MinHeight" Value="42"/>
+        <Setter Property="Height" Value="44"/>
+        <Setter Property="Margin" Value="8,2"/>
+        <Setter Property="Padding" Value="12,0"/>
         <Setter Property="HorizontalContentAlignment" Value="Left"/>
         <Setter Property="Cursor" Value="Hand"/>
         <Setter Property="BorderThickness" Value="0"/>
@@ -223,7 +288,7 @@
         </Setter>
     </Style>
 
-    <!-- نمط الجداول مع دعم التحديد المتعدد بالماوس و Ctrl و Shift وتمدد الصفوف تلقائياً -->
+    <!-- نمط الجداول المرن مع دعم تغيير عرض الأعمدة والتمرير السلس -->
     <Style TargetType="DataGrid">
         <Setter Property="Background" Value="#FFFFFF"/>
         <Setter Property="BorderBrush" Value="#E2E8F0"/>
@@ -233,22 +298,27 @@
         <Setter Property="GridLinesVisibility" Value="Horizontal"/>
         <Setter Property="HorizontalGridLinesBrush" Value="#E2E8F0"/>
         <Setter Property="HeadersVisibility" Value="Column"/>
-        <Setter Property="MinRowHeight" Value="40"/>
+        <Setter Property="MinRowHeight" Value="38"/>
         <Setter Property="FontSize" Value="13.5"/>
         <Setter Property="FontFamily" Value="Segoe UI"/>
         <Setter Property="SelectionMode" Value="Extended"/>
         <Setter Property="SelectionUnit" Value="FullRow"/>
         <Setter Property="CanUserAddRows" Value="False"/>
         <Setter Property="CanUserDeleteRows" Value="False"/>
+        <Setter Property="CanUserResizeColumns" Value="True"/>
+        <Setter Property="CanUserReorderColumns" Value="True"/>
         <Setter Property="AutoGenerateColumns" Value="False"/>
+        <Setter Property="ScrollViewer.CanContentScroll" Value="True"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto"/>
+        <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto"/>
     </Style>
 
-    <!-- نمط رؤوس الأعمدة مع التفاف النص التلقائي لسطر جديد إذا كان العنوان أكبر من عرض العمود -->
+    <!-- نمط رؤوس الأعمدة مع التفاف النص التلقائي -->
     <Style TargetType="DataGridColumnHeader">
         <Setter Property="Background" Value="#F1F5F9"/>
         <Setter Property="Foreground" Value="#1E293B"/>
         <Setter Property="FontWeight" Value="Bold"/>
-        <Setter Property="MinHeight" Value="44"/>
+        <Setter Property="MinHeight" Value="42"/>
         <Setter Property="Padding" Value="8,6"/>
         <Setter Property="BorderBrush" Value="#E2E8F0"/>
         <Setter Property="BorderThickness" Value="0,0,1,1"/>

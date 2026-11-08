@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data;
@@ -542,6 +542,74 @@ namespace SchoolEvaluationERP.Services
                 await conn.ExecuteAsync("DELETE FROM dbo.Templates WHERE TemplateID = @ID", new { ID = templateId });
                 return (true, "تم حذف قالب التقييم نهائياً بنجاح.");
             }
+        }
+    
+        public async Task<List<EvaluatorEmployeesSheetExportDto>> GetAllEvaluatorsWithAssignedEmployeesAsync()
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+
+            var evaluators = (await conn.QueryAsync<EvaluatorEmployeesSheetExportDto>(@"
+                SELECT ev.EvaluatorID,
+                       ev.EvaluatorName,
+                       ev.GroupID,
+                       ISNULL(eg.GroupName, N'') AS GroupName
+                FROM dbo.Evaluators ev
+                INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE ev.IsActive = 1 AND eg.IsActive = 1
+                ORDER BY eg.GroupID ASC, ev.EvaluatorID ASC")).ToList();
+
+            string empSql = @"
+                SELECT e.EmployeeID,
+                       e.EvaluationName,
+                       e.SystemName,
+                       b.BranchName,
+                       c.CategoryName,
+                       j.JobTitle,
+                       jt.JobTypeName,
+                       e.HasIncentive,
+                       e.IsContinuing
+                FROM dbo.Employees e
+                INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
+                INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
+                INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
+                INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
+                WHERE e.IsActive = 1
+                  AND (
+                      EXISTS (
+                          SELECT 1 FROM dbo.EmployeeEvaluators ee
+                          WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM dbo.CategoryEvaluatorGroups ceg
+                          INNER JOIN dbo.Evaluators ev_single ON ev_single.GroupID = ceg.GroupID
+                          WHERE ceg.CategoryID = e.CategoryID
+                            AND ev_single.EvaluatorID = @EvalID
+                            AND (SELECT COUNT(1) FROM dbo.Evaluators ev_cnt WHERE ev_cnt.GroupID = ceg.GroupID AND ev_cnt.IsActive = 1) = 1
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM dbo.SheetEmployees se
+                          INNER JOIN dbo.TemplateSheets ts ON se.SheetID = ts.SheetID
+                          INNER JOIN dbo.Templates t ON ts.TemplateID = t.TemplateID
+                          WHERE se.EmployeeID = e.EmployeeID
+                            AND t.EvaluatorID = @EvalID
+                            AND t.IsCurrentVersion = 1
+                            AND t.IsDeleted = 0
+                      )
+                  )
+                ORDER BY b.BranchName ASC, c.CategoryID ASC, e.EvaluationName ASC";
+
+            foreach (var eval in evaluators)
+            {
+                var emps = (await conn.QueryAsync<EvaluatorEmployeeExportRowDto>(empSql, new { EvalID = eval.EvaluatorID })).ToList();
+                for (int i = 0; i < emps.Count; i++)
+                {
+                    emps[i].RowNumber = i + 1;
+                }
+                eval.Employees = emps;
+            }
+
+            return evaluators;
         }
     }
 }

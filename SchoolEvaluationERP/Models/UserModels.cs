@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
@@ -18,10 +18,6 @@ namespace SchoolEvaluationERP.Models
         public string PasswordStatusDisplay => MustChangePassword ? "مطالب بتغييرها عند الدخول" : "معتمدة";
     }
 
-    /// <summary>
-    /// يمثل صف صلاحية شاشة واحدة في جدول الصلاحيات مع منطق الترابط الذكي:
-    /// تفعيل (إضافة أو تعديل أو حذف) يفعل (قراءة) تلقائياً، وإلغاء (قراءة) يلغي البقية تلقائياً.
-    /// </summary>
     public class PermissionRowViewModel : INotifyPropertyChanged
     {
         private bool _canRead;
@@ -98,11 +94,13 @@ namespace SchoolEvaluationERP.Models
             return new List<PermissionRowViewModel>
             {
                 new() { ModuleCode = "MasterData", ModuleArabicName = "1. صفحة الأساسيات والهيكل التنظيمي", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "Templates", ModuleArabicName = "2. إنشاء وتجهيز قوالب التقييم (A4 / Excel)", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "ScoreEntry", ModuleArabicName = "3. إدخال التقييمات الشهرية", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "HistoryLog", ModuleArabicName = "4. سجل التقييمات والأرشيف", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "FinalReport", ModuleArabicName = "5. التقرير النهائي وصرف الحوافز", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "UserManagement", ModuleArabicName = "6. إدارة المستخدمين والصلاحيات", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll }
+                new() { ModuleCode = "IncentiveBasics", ModuleArabicName = "2. أساسيات الحوافز للفئات", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "Templates", ModuleArabicName = "3. إنشاء وتجهيز قوالب التقييم (A4 / Excel)", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "ScoreEntry", ModuleArabicName = "4. إدخال التقييمات الشهرية", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "ScoreBalancing", ModuleArabicName = "5. نسب الموازنة للتقييمات", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "HistoryLog", ModuleArabicName = "6. سجل التقييمات والأرشيف", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "FinalReport", ModuleArabicName = "7. التقرير النهائي وصرف الحوافز", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "UserManagement", ModuleArabicName = "8. إدارة المستخدمين والصلاحيات", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll }
             };
         }
 

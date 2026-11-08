@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -141,7 +141,13 @@ namespace SchoolEvaluationERP.Views
         private async void GridUsers_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (GridUsers.SelectedItem is not UserDto selected)
+            {
+                if (_editingUserId != 0 && CanInsert)
+                {
+                    PrepareNewUserForm();
+                }
                 return;
+            }
 
             _editingUserId = selected.UserID;
             TxtFormTitle.Text = CanUpdate
@@ -316,3 +322,4 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+

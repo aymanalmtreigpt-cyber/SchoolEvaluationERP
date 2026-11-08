@@ -1,3 +1,4 @@
+﻿using System.Collections.Generic;
 using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -331,5 +332,31 @@ namespace SchoolEvaluationERP.Models
         public int VersionNumber { get; set; } = 1;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public ObservableCollection<TemplateSheetModel> Sheets { get; set; } = new();
+    }
+
+    public class EvaluatorEmployeeExportRowDto
+    {
+        public int RowNumber { get; set; }
+        public int EmployeeID { get; set; }
+        public string EvaluationName { get; set; } = string.Empty;
+        public string SystemName { get; set; } = string.Empty;
+        public string BranchName { get; set; } = string.Empty;
+        public string CategoryName { get; set; } = string.Empty;
+        public string JobTitle { get; set; } = string.Empty;
+        public string JobTypeName { get; set; } = string.Empty;
+        public bool HasIncentive { get; set; } = true;
+        public bool IsContinuing { get; set; } = true;
+
+        public string IncentiveStatusText => HasIncentive ? "بحافز" : "بدون حافز";
+        public string ContinuingStatusText => IsContinuing ? "مستمر" : "منقطع";
+    }
+
+    public class EvaluatorEmployeesSheetExportDto
+    {
+        public int EvaluatorID { get; set; }
+        public string EvaluatorName { get; set; } = string.Empty;
+        public int GroupID { get; set; }
+        public string GroupName { get; set; } = string.Empty;
+        public List<EvaluatorEmployeeExportRowDto> Employees { get; set; } = new();
     }
 }

@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -10,6 +10,8 @@ namespace SchoolEvaluationERP
     public partial class MainWindow : Window
     {
         private readonly List<Button> _navButtons;
+        private bool _isSidebarCollapsed;
+        private double _savedSidebarWidth = 260;
 
         public MainWindow()
         {
@@ -18,14 +20,42 @@ namespace SchoolEvaluationERP
             _navButtons = new List<Button>
             {
                 NavMasterData,
+                NavIncentiveBasics,
                 NavTemplates,
                 NavScoreEntry,
+                NavScoreBalancing,
                 NavHistoryLog,
                 NavFinalReport,
-                NavUserManagement
+                NavUserManagement,
+                NavDatabaseBackup
             };
 
             ApplyUserSessionAndPermissions();
+        }
+
+        private void BtnToggleSidebar_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_isSidebarCollapsed)
+            {
+                if (ColSidebar.ActualWidth >= 195)
+                    _savedSidebarWidth = ColSidebar.ActualWidth;
+
+                ColSidebar.MinWidth = 0;
+                ColSidebar.Width = new GridLength(0);
+                SidebarContainer.Visibility = Visibility.Collapsed;
+                SidebarSplitter.Visibility = Visibility.Collapsed;
+                BtnToggleSidebar.Content = "☰ إظهار القائمة";
+                _isSidebarCollapsed = true;
+            }
+            else
+            {
+                SidebarContainer.Visibility = Visibility.Visible;
+                SidebarSplitter.Visibility = Visibility.Visible;
+                ColSidebar.MinWidth = 195;
+                ColSidebar.Width = new GridLength(_savedSidebarWidth);
+                BtnToggleSidebar.Content = "☰ القائمة";
+                _isSidebarCollapsed = false;
+            }
         }
 
         private void ApplyUserSessionAndPermissions()
@@ -47,7 +77,7 @@ namespace SchoolEvaluationERP
             foreach (var btn in _navButtons)
             {
                 string moduleCode = btn.Tag?.ToString() ?? string.Empty;
-                bool canRead = session.HasPermission(moduleCode, "read");
+                bool canRead = moduleCode == "DatabaseBackup" ? session.IsAdmin : session.HasPermission(moduleCode, "read");
 
                 btn.Visibility = canRead ? Visibility.Visible : Visibility.Collapsed;
                 if (canRead && firstAllowedButton == null)
@@ -56,7 +86,6 @@ namespace SchoolEvaluationERP
                 }
             }
 
-            // افتراضياً نفتح (1. صفحة الأساسيات) عند تسجيل الدخول، أو أول شاشة مسموحة للمستخدم
             if (session.HasPermission("MasterData", "read"))
             {
                 NavigateToModule("MasterData", NavMasterData);
@@ -81,7 +110,6 @@ namespace SchoolEvaluationERP
 
         private void NavigateToModule(string moduleCode, Button activeBtn)
         {
-            // تلوين الزر النشط في القائمة الجانبية
             foreach (var btn in _navButtons)
             {
                 btn.Background = Brushes.Transparent;
@@ -95,14 +123,14 @@ namespace SchoolEvaluationERP
 
             switch (moduleCode)
             {
-                case "UserManagement":
-                    TxtActivePageTitle.Text = "إدارة المستخدمين وصلاحيات النظام (RBAC)";
-                    MainContentHost.Content = new UserManagementView();
-                    break;
-
                 case "MasterData":
                     TxtActivePageTitle.Text = "صفحة الأساسيات (الهيكل التنظيمي، مجموعات المقيمين، تخصيص الدرجات، الموظفين)";
                     MainContentHost.Content = new MasterDataView();
+                    break;
+
+                case "IncentiveBasics":
+                    TxtActivePageTitle.Text = "أساسيات الحوافز وتخصيص الحد الأعلى والأدنى لكل فئة";
+                    MainContentHost.Content = new IncentiveBasicsView();
                     break;
 
                 case "Templates":
@@ -115,6 +143,11 @@ namespace SchoolEvaluationERP
                     MainContentHost.Content = new ScoreEntryView();
                     break;
 
+                case "ScoreBalancing":
+                    TxtActivePageTitle.Text = "نسب الموازنة ومعالجة نسب التقييم غير المنطقية للمقيمين";
+                    MainContentHost.Content = new ScoreBalancingView();
+                    break;
+
                 case "HistoryLog":
                     TxtActivePageTitle.Text = "سجل التقييمات الشهرية والأرشيف التاريخي";
                     MainContentHost.Content = new HistoryLogView();
@@ -123,6 +156,16 @@ namespace SchoolEvaluationERP
                 case "FinalReport":
                     TxtActivePageTitle.Text = "التقرير الشهري النهائي وصرف الحوافز المحاسبية";
                     MainContentHost.Content = new FinalReportView();
+                    break;
+
+                case "UserManagement":
+                    TxtActivePageTitle.Text = "إدارة المستخدمين وصلاحيات النظام (RBAC)";
+                    MainContentHost.Content = new UserManagementView();
+                    break;
+
+                case "DatabaseBackup":
+                    TxtActivePageTitle.Text = "إدارة النسخ الاحتياطي واستعادة قاعدة البيانات";
+                    MainContentHost.Content = new DatabaseBackupView();
                     break;
             }
         }
@@ -138,38 +181,7 @@ namespace SchoolEvaluationERP
             if (session.HasPermission(moduleCode, "update")) allowed.Add("تعديل ✔");
             if (session.HasPermission(moduleCode, "delete")) allowed.Add("حذف ✔");
 
-            TxtPermissionsBadge.Text = $"صلاحياتك في هذه الشاشة: {string.Join("  |  ", allowed)}";
-        }
-
-        private UIElement CreatePhasePlaceholder(string title, string description)
-        {
-            var card = new Border
-            {
-                Style = (Style)FindResource("CardStyle"),
-                VerticalAlignment = VerticalAlignment.Center,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                MaxWidth = 650,
-                Padding = new Thickness(32)
-            };
-
-            var stack = new StackPanel();
-            stack.Children.Add(new TextBlock
-            {
-                Text = title,
-                FontSize = 20,
-                FontWeight = FontWeights.Bold,
-                Margin = new Thickness(0, 0, 0, 10)
-            });
-            stack.Children.Add(new TextBlock
-            {
-                Text = description,
-                FontSize = 14,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = new SolidColorBrush(Color.FromRgb(71, 85, 105))
-            });
-
-            card.Child = stack;
-            return card;
+            TxtPermissionsBadge.Text = $"صلاحياتك: {string.Join(" | ", allowed)}";
         }
 
         private void BtnChangeOwnPassword_Click(object sender, RoutedEventArgs e)
@@ -191,8 +203,3 @@ namespace SchoolEvaluationERP
         }
     }
 }
-
-
-
-
-

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
@@ -93,6 +93,9 @@ namespace SchoolEvaluationERP.Services
                 .GroupBy(x => (int)x.CategoryID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
+            var categoryIncentiveMap = (await conn.QueryAsync<dynamic>("SELECT CategoryID, MaxIncentiveAmount, MinIncentiveAmount FROM dbo.Categories"))
+                .ToDictionary(k => (int)k.CategoryID, v => (MaxAmt: (decimal)v.MaxIncentiveAmount, MinAmt: (decimal)v.MinIncentiveAmount));
+
             var empAssignedEvals = (await conn.QueryAsync<dynamic>(@"
                 SELECT ee.EmployeeID, ee.EvaluatorID, ev.GroupID, ev.EvaluatorName
                 FROM dbo.EmployeeEvaluators ee
@@ -109,12 +112,18 @@ namespace SchoolEvaluationERP.Services
                        ev.GroupID,
                        ISNULL(eg.GroupName, N'') AS GroupName,
                        ev.EvaluatorName,
-                       SUM(es.GivenScore) AS RawMonthSumOutOf100,
+                       CASE
+                           WHEN SUM(es.GivenScore) + ISNULL(MAX(adj.BalancingDelta), 0) > 100 THEN 100
+                           WHEN SUM(es.GivenScore) + ISNULL(MAX(adj.BalancingDelta), 0) < 0 THEN 0
+                           ELSE SUM(es.GivenScore) + ISNULL(MAX(adj.BalancingDelta), 0)
+                       END AS RawMonthSumOutOf100,
                        MAX(es.SnapshotEvaluatorWeight) AS SnapshotWeight
                 FROM dbo.EvaluationScores es
                 INNER JOIN dbo.EvaluationRecords er ON es.RecordID = er.RecordID
                 INNER JOIN dbo.Evaluators ev ON er.EvaluatorID = ev.EvaluatorID
                 LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                LEFT JOIN dbo.EvaluationEmployeeAdjustments adj
+                    ON adj.RecordID = es.RecordID AND adj.SheetID = es.SheetID AND adj.EmployeeID = es.EmployeeID
                 WHERE er.EvalYear = @Year AND er.EvalMonth = @Month
                 GROUP BY es.EmployeeID, er.EvaluatorID, ev.GroupID, eg.GroupName, ev.EvaluatorName, es.SheetID";
 
@@ -266,12 +275,15 @@ namespace SchoolEvaluationERP.Services
                 }
                 else
                 {
+                    decimal catMaxAmt = categoryIncentiveMap.TryGetValue(emp.CategoryID, out var lim) ? lim.MaxAmt : maxIncentiveAmount;
+                    decimal catMinAmt = categoryIncentiveMap.TryGetValue(emp.CategoryID, out var lim2) ? lim2.MinAmt : minIncentiveAmount;
+
                     var calc = IncentiveCalculatorService.CalculateMonthlyIncentive(
                         emp.SystemName,
                         emp.BranchName,
                         monthlyTotalScore,
-                        maxIncentiveAmount,
-                        minIncentiveAmount,
+                        catMaxAmt,
+                        catMinAmt,
                         year,
                         month,
                         debitAccountTitle,
@@ -571,3 +583,4 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+

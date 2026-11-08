@@ -1,5 +1,6 @@
 ﻿using System.Windows;
 using QuestPDF.Infrastructure;
+using SchoolEvaluationERP.Views;
 
 namespace SchoolEvaluationERP
 {
@@ -9,6 +10,9 @@ namespace SchoolEvaluationERP
         {
             base.OnStartup(e);
             QuestPDF.Settings.License = LicenseType.Community;
+
+            // تفعيل ميزة التحديد المتعدد وإلغاء التحديد بالضغط غير السريع على جميع جداول النظام
+            DataGridSelectionBehavior.RegisterGlobalHandlers();
 
             DispatcherUnhandledException += (_, args) =>
             {
