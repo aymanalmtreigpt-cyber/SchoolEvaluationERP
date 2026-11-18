@@ -1,7 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -62,8 +61,6 @@ namespace SchoolEvaluationERP.Views
             CmbCategory.SelectedIndex = 0;
 
             TxtDebitAccount.Text = AppConfigService.DefaultDebitAccountName;
-            TxtMaxIncentive.Text = AppConfigService.DefaultMaxIncentiveAmount.ToString("0.##", CultureInfo.InvariantCulture);
-            TxtMinIncentive.Text = AppConfigService.DefaultMinIncentiveAmount.ToString("0.##", CultureInfo.InvariantCulture);
             ChkRoundTo50.IsChecked = AppConfigService.RoundToNearest50;
 
             _isInitializing = false;
@@ -79,16 +76,6 @@ namespace SchoolEvaluationERP.Views
                 ? AppConfigService.DefaultDebitAccountName
                 : TxtDebitAccount.Text.Trim();
 
-            if (!decimal.TryParse(TxtMaxIncentive.Text.Trim().Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal maxAmt) || maxAmt < 0m)
-            {
-                maxAmt = AppConfigService.DefaultMaxIncentiveAmount;
-            }
-
-            if (!decimal.TryParse(TxtMinIncentive.Text.Trim().Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal minAmt) || minAmt < 0m)
-            {
-                minAmt = AppConfigService.DefaultMinIncentiveAmount;
-            }
-
             bool round50 = ChkRoundTo50.IsChecked == true;
             bool onlyDeserving = ChkOnlyDeserving.IsChecked == true;
             int? branchId = (CmbBranch.SelectedItem as FilterOptionItem)?.Value;
@@ -99,8 +86,8 @@ namespace SchoolEvaluationERP.Views
                 year,
                 month,
                 debitTitle,
-                maxAmt,
-                minAmt,
+                AppConfigService.DefaultMaxIncentiveAmount,
+                AppConfigService.DefaultMinIncentiveAmount,
                 round50,
                 branchId,
                 categoryId,

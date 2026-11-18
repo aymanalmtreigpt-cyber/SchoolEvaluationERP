@@ -306,8 +306,8 @@ namespace SchoolEvaluationERP.Services
                 TemplateSheets = await QueryTableAsDictionariesAsync(conn, "SELECT SheetID, TemplateID, SheetName, TargetCategoryID, TargetBranchID, TargetCategoryName, SortOrder FROM dbo.TemplateSheets"),
                 SheetCriteria = await QueryTableAsDictionariesAsync(conn, "SELECT CriteriaID, SheetID, CriteriaTitle, MaxScore, ColumnOrder FROM dbo.SheetCriteria"),
                 SheetEmployees = await QueryTableAsDictionariesAsync(conn, "SELECT SheetEmployeeID, SheetID, EmployeeID, RowOrder FROM dbo.SheetEmployees"),
-                EvaluationRecords = await QueryTableAsDictionariesAsync(conn, "SELECT RecordID, TemplateID, EvaluatorID, EvalYear, EvalMonth, CreatedByUserID, CreatedAt, LastModifiedByUserID, LastModifiedAt FROM dbo.EvaluationRecords"),
-                EvaluationScores = await QueryTableAsDictionariesAsync(conn, "SELECT ScoreID, RecordID, SheetID, EmployeeID, CriteriaID, GivenScore, SnapshotEvaluatorWeight FROM dbo.EvaluationScores"),
+                EvaluationRecords = await QueryTableAsDictionariesAsync(conn, "SELECT RecordID, TemplateID, EvaluatorID, EvalYear, EvalMonth, CreatedByUserID, CreatedAt, LastModifiedByUserID, LastModifiedAt, SnapshotEvaluatorName, SnapshotGroupName, SnapshotVersionNumber, SnapshotCreatedByFullName FROM dbo.EvaluationRecords"),
+                EvaluationScores = await QueryTableAsDictionariesAsync(conn, "SELECT ScoreID, RecordID, SheetID, EmployeeID, CriteriaID, GivenScore, SnapshotEvaluatorWeight, SnapshotEvaluationName, SnapshotSystemName, SnapshotBranchName, SnapshotCategoryName, SnapshotJobTitle, SnapshotJobTypeName, SnapshotHasIncentive, SnapshotSheetName, SnapshotTargetCategoryName, SnapshotSheetSortOrder, SnapshotCriteriaTitle, SnapshotCriteriaMaxScore, SnapshotCriteriaOrder FROM dbo.EvaluationScores"),
                 EvaluationEmployeeAdjustments = await QueryTableAsDictionariesAsync(conn, "SELECT AdjustmentID, RecordID, SheetID, EmployeeID, BalancingDelta FROM dbo.EvaluationEmployeeAdjustments")
             };
 
@@ -453,3 +453,4 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+

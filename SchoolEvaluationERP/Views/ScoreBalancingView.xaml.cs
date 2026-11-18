@@ -143,7 +143,7 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            bool canEdit = CanEditBalancing;
+            bool canEdit = CanEditBalancing && _currentWorkspace.CanBeModified;
             BtnSaveBalancing.IsEnabled = canEdit;
             BtnIncreaseAllTemplate.IsEnabled = canEdit;
             BtnDecreaseAllTemplate.IsEnabled = canEdit;
@@ -165,7 +165,7 @@ namespace SchoolEvaluationERP.Views
             TxtOpenedRecordHeader.Text = $"سجل المقيم: {_currentWorkspace.EvaluatorName}{grpText}  —  شهر {mName} {_currentWorkspace.EvalYear} م";
             BadgeRecordAverage.Visibility = Visibility.Visible;
 
-            RebuildBalancingDataGrid(CanEditBalancing);
+            RebuildBalancingDataGrid(CanEditBalancing && _currentWorkspace.CanBeModified);
             ApplyEmployeeSearchFilter();
             RebuildBottomSheetTabsBar();
             UpdateLiveAveragesBadges();
@@ -229,7 +229,7 @@ namespace SchoolEvaluationERP.Views
                     Binding = new Binding($"[{i}]"),
                     ElementStyle = critCellStyle,
                     IsReadOnly = true,
-                    Width = new DataGridLength(0.85, DataGridLengthUnitType.Star)
+                    Width = new DataGridLength(0.85, DataGridLengthUnitType.Star), MinWidth = 120
                 });
             }
 
@@ -576,3 +576,5 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+

@@ -56,6 +56,11 @@ namespace SchoolEvaluationERP.Models
         public bool IsContinuing { get; set; } = true;
         public decimal EvaluatorWeight { get; set; }
 
+        // خصائص وضع الغياب والتأخير (إدخال عدد الأيام/المرات واحتساب الدرجة بالخصم التدريجي المتساوي)
+        public bool IsCountBasedMode { get; set; }
+        public int MaxAllowedCount { get; set; } = 3;
+        public decimal? DirectCalculatedScoreOverride { get; set; }
+
         public string FullJobDisplay => string.IsNullOrWhiteSpace(JobTypeName)
             ? JobTitle
             : $"{JobTitle} - {JobTypeName}";
@@ -102,11 +107,33 @@ namespace SchoolEvaluationERP.Models
             ? $"+{_balancingDelta:0.##}"
             : $"{_balancingDelta:0.##}";
 
+        /// <summary>
+        /// معادلة الخصم التدريجي المتساوي للغياب والتأخير:
+        /// 0 -> 100% | أكبر من الحد المسموح -> 0% | بين 1 والحد المسموح -> تقسيم متساوٍ على (الحد المسموح + 1)
+        /// </summary>
+        public static decimal CalculateGradualScoreFromCount(int enteredCount, int maxAllowedCount)
+        {
+            if (enteredCount <= 0) return 100m;
+            if (maxAllowedCount <= 0) return 0m;
+            if (enteredCount > maxAllowedCount) return 0m;
+
+            decimal steps = maxAllowedCount + 1m;
+            decimal remainingSteps = steps - enteredCount;
+            return Math.Round((remainingSteps / steps) * 100m, 2, MidpointRounding.AwayFromZero);
+        }
+
         public void InitializeCriteria(
             IList<CriteriaColumnModel> criteriaColumns,
             Dictionary<int, decimal>? savedScoresByCriteriaId = null,
-            decimal savedBalancingDelta = 0m)
+            decimal savedBalancingDelta = 0m,
+            bool isCountBased = false,
+            int maxAllowedCount = 3,
+            Dictionary<int, int>? savedRawCountsByCriteriaId = null)
         {
+            IsCountBasedMode = isCountBased;
+            MaxAllowedCount = maxAllowedCount;
+            DirectCalculatedScoreOverride = null;
+
             int count = criteriaColumns.Count;
             _scores = new int[count];
             _maxScores = new int[count];
@@ -116,15 +143,37 @@ namespace SchoolEvaluationERP.Models
             for (int i = 0; i < count; i++)
             {
                 _criteriaIds[i] = criteriaColumns[i].CriteriaID;
-                _maxScores[i] = (int)Math.Round(criteriaColumns[i].MaxScore, 0, MidpointRounding.AwayFromZero);
+                _maxScores[i] = isCountBased
+                    ? 365
+                    : (int)Math.Round(criteriaColumns[i].MaxScore, 0, MidpointRounding.AwayFromZero);
 
-                if (savedScoresByCriteriaId != null && savedScoresByCriteriaId.TryGetValue(_criteriaIds[i], out decimal val))
+                if (isCountBased)
                 {
-                    _scores[i] = (int)Math.Round(val, 0, MidpointRounding.AwayFromZero);
+                    if (savedRawCountsByCriteriaId != null && savedRawCountsByCriteriaId.TryGetValue(_criteriaIds[i], out int savedCnt))
+                    {
+                        _scores[i] = Math.Max(0, savedCnt);
+                    }
+                    else if (savedScoresByCriteriaId != null && savedScoresByCriteriaId.TryGetValue(_criteriaIds[i], out decimal savedScore))
+                    {
+                        // إذا كان مسجلاً من قبل بدرجة مئوية قديمة نحافظ على الدرجة المحفوظة حتى يعدل المستخدم العدد
+                        DirectCalculatedScoreOverride = savedScore;
+                        _scores[i] = 0;
+                    }
+                    else
+                    {
+                        _scores[i] = 0;
+                    }
                 }
                 else
                 {
-                    _scores[i] = 0;
+                    if (savedScoresByCriteriaId != null && savedScoresByCriteriaId.TryGetValue(_criteriaIds[i], out decimal val))
+                    {
+                        _scores[i] = (int)Math.Round(val, 0, MidpointRounding.AwayFromZero);
+                    }
+                    else
+                    {
+                        _scores[i] = 0;
+                    }
                 }
             }
 
@@ -139,17 +188,37 @@ namespace SchoolEvaluationERP.Models
         public int GetMaxScoreAt(int index) => _maxScores[index];
         public int GetScoreAt(int index) => _scores[index];
 
+        /// <summary>
+        /// يُرجع الدرجة الفعلية من 100 التي تُحفظ في جدول الدرجات (سواء كانت درجة عادية أو ناتج تحويل أيام الغياب/التأخير).
+        /// </summary>
+        public decimal GetEffectiveCriteriaScoreForSave(int index)
+        {
+            if (index < 0 || index >= _scores.Length) return 0m;
+            if (IsCountBasedMode)
+            {
+                if (DirectCalculatedScoreOverride.HasValue)
+                    return DirectCalculatedScoreOverride.Value;
+                return CalculateGradualScoreFromCount(_scores[index], MaxAllowedCount);
+            }
+            return _scores[index];
+        }
+
         public void SetScoreAt(int index, int value)
         {
             if (index < 0 || index >= _scores.Length) return;
 
-            int maxAllowed = _maxScores[index];
+            DirectCalculatedScoreOverride = null;
+            int maxAllowed = IsCountBasedMode ? 365 : _maxScores[index];
             int clamped = value < 0 ? 0 : (value > maxAllowed ? maxAllowed : value);
 
             if (_scores[index] != clamped)
             {
                 _scores[index] = clamped;
                 OnPropertyChanged("Item[]");
+                NotifyCalculatedFields();
+            }
+            else
+            {
                 NotifyCalculatedFields();
             }
         }
@@ -176,28 +245,31 @@ namespace SchoolEvaluationERP.Models
 
                 if (int.TryParse(clean, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
                 {
-                    int maxAllowed = _maxScores[index];
-                    if (parsed > maxAllowed)
+                    if (!IsCountBasedMode)
                     {
-                        System.Windows.MessageBox.Show(
-                            $"الدرجة المدخلة ({parsed}) للموظف ({EvaluationName}) تتجاوز الدرجة القصوى المسموحة لهذا المبدأ وهي ({maxAllowed}) درجة.\nسيتم ضبطها على الحد الأقصى المسموح ({maxAllowed}).",
-                            "تنبيه تجاوز درجة المبدأ",
-                            System.Windows.MessageBoxButton.OK,
-                            System.Windows.MessageBoxImage.Warning);
-                        parsed = maxAllowed;
-                    }
-                    else if (parsed < 0)
-                    {
-                        parsed = 0;
+                        int maxAllowed = _maxScores[index];
+                        if (parsed > maxAllowed)
+                        {
+                            System.Windows.MessageBox.Show(
+                                $"الدرجة المدخلة ({parsed}) للموظف ({EvaluationName}) تتجاوز الدرجة القصوى المسموحة لهذا المبدأ وهي ({maxAllowed}) درجة.\nسيتم ضبطها على الحد الأقصى المسموح ({maxAllowed}).",
+                                "تنبيه تجاوز درجة المبدأ",
+                                System.Windows.MessageBoxButton.OK,
+                                System.Windows.MessageBoxImage.Warning);
+                            parsed = maxAllowed;
+                        }
                     }
 
+                    if (parsed < 0) parsed = 0;
                     SetScoreAt(index, parsed);
                 }
                 else if (decimal.TryParse(clean.Replace(',', '.'), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal decVal))
                 {
                     int rounded = (int)Math.Round(decVal, 0, MidpointRounding.AwayFromZero);
-                    int maxAllowed = _maxScores[index];
-                    if (rounded > maxAllowed) rounded = maxAllowed;
+                    if (!IsCountBasedMode)
+                    {
+                        int maxAllowed = _maxScores[index];
+                        if (rounded > maxAllowed) rounded = maxAllowed;
+                    }
                     if (rounded < 0) rounded = 0;
                     SetScoreAt(index, rounded);
                 }
@@ -220,9 +292,11 @@ namespace SchoolEvaluationERP.Models
 
         public void FillFullMarks()
         {
+            DirectCalculatedScoreOverride = null;
             for (int i = 0; i < _scores.Length; i++)
             {
-                _scores[i] = _maxScores[i];
+                // في وضع الغياب والتأخير: الدرجة الكاملة (100%) تعني أن عدد أيام الغياب/التأخير = 0
+                _scores[i] = IsCountBasedMode ? 0 : _maxScores[i];
             }
             OnPropertyChanged("Item[]");
             NotifyCalculatedFields();
@@ -230,15 +304,30 @@ namespace SchoolEvaluationERP.Models
 
         public void ClearMarksToZero()
         {
+            DirectCalculatedScoreOverride = null;
             for (int i = 0; i < _scores.Length; i++)
             {
-                _scores[i] = 0;
+                // في وضع الغياب والتأخير: تصفير الدرجة (0%) يعني تجاوز الحد المسموح (MaxAllowedCount + 1)
+                _scores[i] = IsCountBasedMode ? (MaxAllowedCount + 1) : 0;
             }
             OnPropertyChanged("Item[]");
             NotifyCalculatedFields();
         }
 
-        public decimal RawCriteriaSumOutOf100 => _scores.Sum();
+        public decimal RawCriteriaSumOutOf100
+        {
+            get
+            {
+                if (IsCountBasedMode)
+                {
+                    if (DirectCalculatedScoreOverride.HasValue)
+                        return DirectCalculatedScoreOverride.Value;
+                    int countVal = _scores.Length > 0 ? _scores[0] : 0;
+                    return CalculateGradualScoreFromCount(countVal, MaxAllowedCount);
+                }
+                return _scores.Sum();
+            }
+        }
 
         public decimal RawTotalOutOf100 => Math.Clamp(
             Math.Round(RawCriteriaSumOutOf100 + _balancingDelta, 2, MidpointRounding.AwayFromZero),
@@ -247,7 +336,7 @@ namespace SchoolEvaluationERP.Models
 
         public decimal WeightedScore => Math.Round((RawTotalOutOf100 / 100m) * EvaluatorWeight, 2, MidpointRounding.AwayFromZero);
 
-        public string RawCriteriaSumDisplay => $"{RawCriteriaSumOutOf100:0} / 100";
+        public string RawCriteriaSumDisplay => $"{RawCriteriaSumOutOf100:0.##} / 100";
         public string RawTotalDisplay => $"{RawTotalOutOf100:0.##} / 100";
         public string WeightedScoreDisplay => $"{WeightedScore:0.##} من {EvaluatorWeight:0.##}";
 
@@ -288,6 +377,10 @@ namespace SchoolEvaluationERP.Models
         public int EvalMonth { get; set; }
         public DateTime? CreatedAt { get; set; }
         public string CreatedByUserName { get; set; } = string.Empty;
+        public bool CanBeModified { get; set; } = true;
+        public bool IsCountBasedEvaluation { get; set; }
+        public string SystemGroupCode { get; set; } = string.Empty;
+        public int MaxAllowedCount { get; set; } = 3;
         public List<WeeklyEntrySheetModel> Sheets { get; set; } = new();
     }
 

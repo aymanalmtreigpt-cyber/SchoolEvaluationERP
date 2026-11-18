@@ -330,6 +330,9 @@ namespace SchoolEvaluationERP.Models
         public string EvaluatorName { get; set; } = string.Empty;
         public string GroupName { get; set; } = string.Empty;
         public int VersionNumber { get; set; } = 1;
+        public bool IsSystemTemplate { get; set; }
+        public string SystemGroupCode { get; set; } = string.Empty;
+        public int MaxAllowedCount { get; set; } = 3;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public ObservableCollection<TemplateSheetModel> Sheets { get; set; } = new();
     }
@@ -360,3 +363,4 @@ namespace SchoolEvaluationERP.Models
         public List<EvaluatorEmployeeExportRowDto> Employees { get; set; } = new();
     }
 }
+

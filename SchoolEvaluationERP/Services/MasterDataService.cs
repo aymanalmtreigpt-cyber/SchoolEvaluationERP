@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data;
@@ -62,6 +62,57 @@ namespace SchoolEvaluationERP.Services
         // =========================================================================
         // 1. إدارة الفروع (Branches)
         // =========================================================================
+        private static async Task PurgeOrphanedArchivedDataAsync(SqlConnection conn)
+        {
+            await conn.ExecuteAsync(@"
+                DELETE se FROM dbo.SheetEmployees se INNER JOIN dbo.Employees e ON se.EmployeeID = e.EmployeeID WHERE e.IsActive = 0;
+                DELETE ee FROM dbo.EmployeeEvaluators ee INNER JOIN dbo.Employees e ON ee.EmployeeID = e.EmployeeID WHERE e.IsActive = 0;
+
+                DELETE t FROM dbo.Templates t
+                WHERE t.IsDeleted = 1
+                  AND NOT EXISTS (SELECT 1 FROM dbo.EvaluationRecords er WHERE er.TemplateID = t.TemplateID);
+
+                DELETE e FROM dbo.Employees e
+                WHERE e.IsActive = 0
+                  AND NOT EXISTS (SELECT 1 FROM dbo.EvaluationScores es WHERE es.EmployeeID = e.EmployeeID);
+
+                DELETE jt FROM dbo.JobTypes jt
+                WHERE jt.IsActive = 0
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Employees e WHERE e.JobTypeID = jt.JobTypeID);
+
+                DELETE j FROM dbo.Jobs j
+                WHERE j.IsActive = 0
+                  AND NOT EXISTS (SELECT 1 FROM dbo.JobTypes jt WHERE jt.JobID = j.JobID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Employees e WHERE e.JobID = j.JobID);
+
+                DELETE ceg FROM dbo.CategoryEvaluatorGroups ceg
+                INNER JOIN dbo.Categories c ON ceg.CategoryID = c.CategoryID
+                WHERE c.IsActive = 0;
+
+                DELETE c FROM dbo.Categories c
+                WHERE c.IsActive = 0
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Jobs j WHERE j.CategoryID = c.CategoryID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Employees e WHERE e.CategoryID = c.CategoryID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.TemplateSheets ts WHERE ts.TargetCategoryID = c.CategoryID);
+
+                DELETE ev FROM dbo.Evaluators ev
+                WHERE ev.IsActive = 0
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Templates t WHERE t.EvaluatorID = ev.EvaluatorID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.EvaluationRecords er WHERE er.EvaluatorID = ev.EvaluatorID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.EmployeeEvaluators ee WHERE ee.EvaluatorID = ev.EvaluatorID);
+
+                DELETE eg FROM dbo.EvaluatorGroups eg
+                WHERE eg.IsActive = 0
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Evaluators ev WHERE ev.GroupID = eg.GroupID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.CategoryEvaluatorGroups ceg WHERE ceg.GroupID = eg.GroupID);
+
+                DELETE b FROM dbo.Branches b
+                WHERE b.IsActive = 0
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Employees e WHERE e.BranchID = b.BranchID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.TemplateSheets ts WHERE ts.TargetBranchID = b.BranchID);
+            ");
+        }
+
         public async Task<List<BranchDto>> GetBranchesAsync()
         {
             using var conn = await OpenReadyConnectionAsync();
@@ -110,6 +161,13 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            await PurgeOrphanedArchivedDataAsync(conn);
+
+            int activeEmps = await conn.ExecuteScalarAsync<int>(
+                "SELECT COUNT(1) FROM dbo.Employees WHERE BranchID = @ID AND IsActive = 1", new { ID = branchId });
+            if (activeEmps > 0)
+                return (false, "لا يمكن حذف هذا الفرع لوجود موظفين نشطين مسجلين عليه حالياً.");
+
             try
             {
                 await conn.ExecuteAsync("DELETE FROM dbo.Branches WHERE BranchID = @ID", new { ID = branchId });
@@ -117,7 +175,8 @@ namespace SchoolEvaluationERP.Services
             }
             catch (SqlException)
             {
-                return (false, "لا يمكن حذف هذا الفرع لوجود موظفين أو أوراق قوالب مرتبطين به حالياً.");
+                await conn.ExecuteAsync("UPDATE dbo.Branches SET IsActive = 0 WHERE BranchID = @ID", new { ID = branchId });
+                return (true, "تم حذف الفرع من القائمة النشطة (مع الاحتفاظ بارتباطه في أرشيف التقييمات السابقة).");
             }
         }
 
@@ -288,14 +347,50 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            await PurgeOrphanedArchivedDataAsync(conn);
+
+            int activeEmps = await conn.ExecuteScalarAsync<int>(
+                "SELECT COUNT(1) FROM dbo.Employees WHERE CategoryID = @ID AND IsActive = 1", new { ID = categoryId });
+            if (activeEmps > 0)
+                return (false, "لا يمكن حذف هذه الفئة لوجود موظفين نشطين مسجلين عليها حالياً.");
+
+            int activeTemplates = await conn.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(1) FROM dbo.TemplateSheets ts
+                INNER JOIN dbo.Templates t ON ts.TemplateID = t.TemplateID
+                WHERE ts.TargetCategoryID = @ID AND t.IsDeleted = 0 AND t.IsCurrentVersion = 1", new { ID = categoryId });
+            if (activeTemplates > 0)
+                return (false, "لا يمكن حذف هذه الفئة لوجود قوالب تقييم فعالة مرتبطة بها حالياً.");
+
+            await conn.ExecuteAsync("DELETE FROM dbo.CategoryEvaluatorGroups WHERE CategoryID = @ID", new { ID = categoryId });
+
+            await conn.ExecuteAsync(@"
+                DELETE jt FROM dbo.JobTypes jt
+                INNER JOIN dbo.Jobs j ON jt.JobID = j.JobID
+                WHERE j.CategoryID = @ID
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Employees e WHERE e.JobTypeID = jt.JobTypeID);
+
+                UPDATE jt SET jt.IsActive = 0
+                FROM dbo.JobTypes jt
+                INNER JOIN dbo.Jobs j ON jt.JobID = j.JobID
+                WHERE j.CategoryID = @ID;
+
+                DELETE j FROM dbo.Jobs j
+                WHERE j.CategoryID = @ID
+                  AND NOT EXISTS (SELECT 1 FROM dbo.JobTypes jt WHERE jt.JobID = j.JobID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Employees e WHERE e.JobID = j.JobID);
+
+                UPDATE dbo.Jobs SET IsActive = 0 WHERE CategoryID = @ID;
+            ", new { ID = categoryId });
+
             try
             {
                 await conn.ExecuteAsync("DELETE FROM dbo.Categories WHERE CategoryID = @ID", new { ID = categoryId });
-                return (true, "تم حذف الفئة بنجاح.");
+                return (true, "تم حذف الفئة ووظائفها التابعة بنجاح.");
             }
             catch (SqlException)
             {
-                return (false, "لا يمكن حذف هذه الفئة لوجود وظائف أو موظفين أو قوالب تقييم مرتبطة بها حالياً.");
+                await conn.ExecuteAsync("UPDATE dbo.Categories SET IsActive = 0 WHERE CategoryID = @ID", new { ID = categoryId });
+                return (true, "تم حذف الفئة من القائمة النشطة (مع الاحتفاظ بارتباطها في أرشيف التقييمات السابقة).");
             }
         }
 
@@ -412,14 +507,30 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            await PurgeOrphanedArchivedDataAsync(conn);
+
+            int activeEmps = await conn.ExecuteScalarAsync<int>(
+                "SELECT COUNT(1) FROM dbo.Employees WHERE JobID = @ID AND IsActive = 1", new { ID = jobId });
+            if (activeEmps > 0)
+                return (false, "لا يمكن حذف هذه الوظيفة لوجود موظفين نشطين مسجلين عليها حالياً.");
+
+            await conn.ExecuteAsync(@"
+                DELETE jt FROM dbo.JobTypes jt
+                WHERE jt.JobID = @ID
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Employees e WHERE e.JobTypeID = jt.JobTypeID);
+
+                UPDATE dbo.JobTypes SET IsActive = 0 WHERE JobID = @ID;
+            ", new { ID = jobId });
+
             try
             {
                 await conn.ExecuteAsync("DELETE FROM dbo.Jobs WHERE JobID = @ID", new { ID = jobId });
-                return (true, "تم حذف الوظيفة بنجاح.");
+                return (true, "تم حذف الوظيفة وأنواعها التابعة بنجاح.");
             }
             catch (SqlException)
             {
-                return (false, "لا يمكن حذف هذه الوظيفة لوجود أنواع وظائف أو موظفين مرتبطين بها حالياً.");
+                await conn.ExecuteAsync("UPDATE dbo.Jobs SET IsActive = 0 WHERE JobID = @ID", new { ID = jobId });
+                return (true, "تم حذف الوظيفة من القائمة النشطة (مع الاحتفاظ بارتباطها في أرشيف التقييمات السابقة).");
             }
         }
 
@@ -536,6 +647,13 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            await PurgeOrphanedArchivedDataAsync(conn);
+
+            int activeEmps = await conn.ExecuteScalarAsync<int>(
+                "SELECT COUNT(1) FROM dbo.Employees WHERE JobTypeID = @ID AND IsActive = 1", new { ID = jobTypeId });
+            if (activeEmps > 0)
+                return (false, "لا يمكن حذف نوع الوظيفة لوجود موظفين نشطين مسجلين عليه حالياً.");
+
             try
             {
                 await conn.ExecuteAsync("DELETE FROM dbo.JobTypes WHERE JobTypeID = @ID", new { ID = jobTypeId });
@@ -543,7 +661,8 @@ namespace SchoolEvaluationERP.Services
             }
             catch (SqlException)
             {
-                return (false, "لا يمكن حذف نوع الوظيفة لوجود موظفين مسجلين عليه حالياً.");
+                await conn.ExecuteAsync("UPDATE dbo.JobTypes SET IsActive = 0 WHERE JobTypeID = @ID", new { ID = jobTypeId });
+                return (true, "تم حذف نوع الوظيفة من القائمة النشطة (مع الاحتفاظ بارتباطه في أرشيف التقييمات السابقة).");
             }
         }
 
@@ -564,15 +683,30 @@ namespace SchoolEvaluationERP.Services
             return (await conn.QueryAsync<EvaluatorDto>(sql)).ToList();
         }
 
+        public async Task<(bool IsSuccess, string Message)> SaveSystemEvaluatorGroupSettingsAsync(int groupId, int maxAllowedCount)
+        {
+            if (!CheckPermission("update", out string permErr) && !CheckPermission("insert", out permErr))
+                return (false, permErr);
+
+            using var conn = await OpenReadyConnectionAsync();
+            await conn.ExecuteAsync(
+                "UPDATE dbo.EvaluatorGroups SET MaxAllowedCount = @MaxCnt WHERE GroupID = @GID",
+                new { MaxCnt = maxAllowedCount, GID = groupId });
+            var templateSvc = new TemplateService(_connectionString);
+            await templateSvc.EnsureSystemGroupTemplateAsync(groupId, conn);
+            return (true, "تم حفظ إعدادات الحد المسموح به وتحديث القالب التلقائي بنجاح.");
+        }
+
         public async Task<List<EvaluatorGroupDto>> GetEvaluatorGroupsAsync()
         {
             using var conn = await OpenReadyConnectionAsync();
             var groups = (await conn.QueryAsync<EvaluatorGroupDto>(@"
-                SELECT eg.GroupID, eg.GroupName,
+                SELECT eg.GroupID, eg.GroupName, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup,
+                       ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode, ISNULL(eg.MaxAllowedCount, 3) AS MaxAllowedCount,
                        (SELECT COUNT(1) FROM dbo.CategoryEvaluatorGroups ceg WHERE ceg.GroupID = eg.GroupID) AS AssignedCategoriesCount
                 FROM dbo.EvaluatorGroups eg
                 WHERE eg.IsActive = 1
-                ORDER BY eg.GroupID ASC")).ToList();
+                ORDER BY eg.IsSystemGroup DESC, eg.GroupID ASC")).ToList();
 
             var evaluators = await GetEvaluatorsAsync();
             var evalByGroup = evaluators.GroupBy(e => e.GroupID).ToDictionary(g => g.Key, g => g.ToList());
@@ -733,31 +867,39 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            await PurgeOrphanedArchivedDataAsync(conn);
 
-            int catCount = await conn.ExecuteScalarAsync<int>(
-                "SELECT COUNT(1) FROM dbo.CategoryEvaluatorGroups WHERE GroupID = @GID",
-                new { GID = groupId });
-            if (catCount > 0)
-                return (false, "لا يمكن حذف هذه المجموعة لأنها مخصصة حالياً في درجات إحدى الفئات. قم بإلغاء تخصيصها من الفئة أولاً.");
+            int activeTemplates = await conn.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(1) FROM dbo.Templates t
+                INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                WHERE ev.GroupID = @GID AND t.IsDeleted = 0 AND t.IsCurrentVersion = 1", new { GID = groupId });
+            if (activeTemplates > 0)
+                return (false, "لا يمكن حذف هذه المجموعة لوجود قوالب تقييم فعالة لأحد مقيميها حالياً.");
 
-            using var tx = conn.BeginTransaction();
+            await conn.ExecuteAsync("DELETE FROM dbo.CategoryEvaluatorGroups WHERE GroupID = @GID", new { GID = groupId });
+            await conn.ExecuteAsync(@"
+                DELETE ee FROM dbo.EmployeeEvaluators ee
+                INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
+                WHERE ev.GroupID = @GID", new { GID = groupId });
+
+            await conn.ExecuteAsync(@"
+                DELETE ev FROM dbo.Evaluators ev
+                WHERE ev.GroupID = @GID
+                  AND NOT EXISTS (SELECT 1 FROM dbo.Templates t WHERE t.EvaluatorID = ev.EvaluatorID)
+                  AND NOT EXISTS (SELECT 1 FROM dbo.EvaluationRecords er WHERE er.EvaluatorID = ev.EvaluatorID);
+
+                UPDATE dbo.Evaluators SET IsActive = 0 WHERE GroupID = @GID;
+            ", new { GID = groupId });
+
             try
             {
-                await conn.ExecuteAsync(@"
-                    DELETE ee FROM dbo.EmployeeEvaluators ee
-                    INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
-                    WHERE ev.GroupID = @GID", new { GID = groupId }, tx);
-
-                await conn.ExecuteAsync("DELETE FROM dbo.Evaluators WHERE GroupID = @GID", new { GID = groupId }, tx);
-                await conn.ExecuteAsync("DELETE FROM dbo.EvaluatorGroups WHERE GroupID = @GID", new { GID = groupId }, tx);
-
-                await tx.CommitAsync();
+                await conn.ExecuteAsync("DELETE FROM dbo.EvaluatorGroups WHERE GroupID = @GID", new { GID = groupId });
                 return (true, "تم حذف مجموعة المقيمين بنجاح.");
             }
             catch (SqlException)
             {
-                await tx.RollbackAsync();
-                return (false, "لا يمكن حذف هذه المجموعة لارتباط أحد مقيميها بقوالب أو سجلات تقييم محفوظة.");
+                await conn.ExecuteAsync("UPDATE dbo.EvaluatorGroups SET IsActive = 0 WHERE GroupID = @GID", new { GID = groupId });
+                return (true, "تم حذف مجموعة المقيمين من القائمة النشطة (مع الاحتفاظ بأرشيف التقييمات الشهرية السابقة).");
             }
         }
 
@@ -833,7 +975,6 @@ namespace SchoolEvaluationERP.Services
                         new { CatID = categoryId, GID = row.GroupID, Weight = row.WeightScore }, tx);
                 }
 
-                // حذف إسناد الموظفين في هذه الفئة لأي مقيم لم تعد مجموعته مخصصة لهذه الفئة
                 await conn.ExecuteAsync(@"
                     DELETE ee
                     FROM dbo.EmployeeEvaluators ee
@@ -845,7 +986,6 @@ namespace SchoolEvaluationERP.Services
                           WHERE ceg.CategoryID = @CatID AND ceg.GroupID = ev.GroupID
                       );", new { CatID = categoryId }, tx);
 
-                // إسناد تلقائي لأي مجموعة مكونة من شخص واحد فقط لجميع موظفي هذه الفئة
                 await conn.ExecuteAsync(@"
                     INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID)
                     SELECT e.EmployeeID, ev.EvaluatorID
@@ -860,7 +1000,16 @@ namespace SchoolEvaluationERP.Services
                       );", new { CatID = categoryId }, tx);
 
                 await tx.CommitAsync();
-                return (true, "تم اعتماد تخصيص المقيمين وتوزيع الـ 100 درجة للفئة بنجاح.");
+
+                // التوليد التلقائي لقوالب مجموعات النظام (الغياب والتأخير) لضمان اندماج موظفي الفئة المضافة تلقائياً في ورقة العمل الشاملة
+                var systemGroups = (await conn.QueryAsync<int>("SELECT GroupID FROM dbo.EvaluatorGroups WHERE IsSystemGroup = 1 AND IsActive = 1")).ToList();
+                var templateSvc = new TemplateService(_connectionString);
+                foreach (int sysGroupId in systemGroups)
+                {
+                    await templateSvc.EnsureSystemGroupTemplateAsync(sysGroupId, conn);
+                }
+
+                return (true, "تم اعتماد تخصيص المقيمين وتوزيع الـ 100 درجة للفئة بنجاح، وتحديث قوالب الغياب والتأخير التلقائية.");
             }
             catch (Exception ex)
             {
@@ -1256,15 +1405,18 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            await conn.ExecuteAsync("DELETE FROM dbo.SheetEmployees WHERE EmployeeID = @ID", new { ID = employeeId });
+            await conn.ExecuteAsync("DELETE FROM dbo.EmployeeEvaluators WHERE EmployeeID = @ID", new { ID = employeeId });
+
             try
             {
                 await conn.ExecuteAsync("DELETE FROM dbo.Employees WHERE EmployeeID = @ID", new { ID = employeeId });
-                return (true, "تم حذف الموظف بنجاح.");
+                return (true, "تم حذف الموظف نهائياً بنجاح.");
             }
             catch (SqlException)
             {
                 await conn.ExecuteAsync("UPDATE dbo.Employees SET IsActive = 0 WHERE EmployeeID = @ID", new { ID = employeeId });
-                return (true, "نظراً لوجود تقييمات أو قوالب سابقة مرتبطة بهذا الموظف، تم أرشفته (إيقاف نشاطه) حفاظاً على السجلات التاريخية.");
+                return (true, "تم حذف الموظف من القائمة النشطة (مع الاحتفاظ بدرجاته في أرشيف التقييمات السابقة).");
             }
         }
 
@@ -2098,10 +2250,12 @@ namespace SchoolEvaluationERP.Services
 
                 using var conn = await OpenReadyConnectionAsync();
 
-                var branches = (await GetBranchesAsync()).ToDictionary(b => NormalizeArabicKey(b.BranchName), b => b.BranchID, StringComparer.OrdinalIgnoreCase);
-                var categories = (await GetCategoriesAsync()).ToList();
-                var jobs = (await GetJobsAsync()).ToList();
-                var jobTypes = (await GetJobTypesAsync()).ToList();
+                var branches = (await conn.QueryAsync<BranchDto>("SELECT BranchID, BranchName FROM dbo.Branches"))
+                    .GroupBy(b => NormalizeArabicKey(b.BranchName), StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().BranchID, StringComparer.OrdinalIgnoreCase);
+                var categories = (await conn.QueryAsync<CategoryDto>("SELECT CategoryID, CategoryName FROM dbo.Categories")).ToList();
+                var jobs = (await conn.QueryAsync<JobDto>("SELECT JobID, CategoryID, JobTitle FROM dbo.Jobs")).ToList();
+                var jobTypes = (await conn.QueryAsync<JobTypeDto>("SELECT JobTypeID, JobID, JobTypeName FROM dbo.JobTypes")).ToList();
 
                 var dbGroups = (await conn.QueryAsync<dynamic>("SELECT GroupID, GroupName FROM dbo.EvaluatorGroups")).ToList();
                 var allEvaluators = await GetEvaluatorsAsync();
@@ -2216,6 +2370,8 @@ namespace SchoolEvaluationERP.Services
                         branches[normBranch] = branchId;
                     }
 
+                    await conn.ExecuteAsync("UPDATE dbo.Branches SET IsActive = 1 WHERE BranchID = @BID", new { BID = branchId });
+
                     var matchedCat = categories.FirstOrDefault(c => string.Equals(NormalizeArabicKey(c.CategoryName), NormalizeArabicKey(catName), StringComparison.OrdinalIgnoreCase));
                     if (matchedCat == null)
                     {
@@ -2224,6 +2380,10 @@ namespace SchoolEvaluationERP.Services
                             new { Name = catName });
                         matchedCat = new CategoryDto { CategoryID = newCatId, CategoryName = catName };
                         categories.Add(matchedCat);
+                    }
+                    else
+                    {
+                        await conn.ExecuteAsync("UPDATE dbo.Categories SET IsActive = 1 WHERE CategoryID = @CID", new { CID = matchedCat.CategoryID });
                     }
 
                     var matchedJob = jobs.FirstOrDefault(j => j.CategoryID == matchedCat.CategoryID && string.Equals(NormalizeArabicKey(j.JobTitle), NormalizeArabicKey(jobTitle), StringComparison.OrdinalIgnoreCase));
@@ -2235,6 +2395,10 @@ namespace SchoolEvaluationERP.Services
                         matchedJob = new JobDto { JobID = newJobId, CategoryID = matchedCat.CategoryID, JobTitle = jobTitle };
                         jobs.Add(matchedJob);
                     }
+                    else
+                    {
+                        await conn.ExecuteAsync("UPDATE dbo.Jobs SET IsActive = 1 WHERE JobID = @JID", new { JID = matchedJob.JobID });
+                    }
 
                     var matchedJobType = jobTypes.FirstOrDefault(jt => jt.JobID == matchedJob.JobID && string.Equals(NormalizeArabicKey(jt.JobTypeName), NormalizeArabicKey(jobTypeName), StringComparison.OrdinalIgnoreCase));
                     if (matchedJobType == null)
@@ -2244,6 +2408,10 @@ namespace SchoolEvaluationERP.Services
                             new { JobID = matchedJob.JobID, Name = jobTypeName });
                         matchedJobType = new JobTypeDto { JobTypeID = newJtId, JobID = matchedJob.JobID, JobTypeName = jobTypeName };
                         jobTypes.Add(matchedJobType);
+                    }
+                    else
+                    {
+                        await conn.ExecuteAsync("UPDATE dbo.JobTypes SET IsActive = 1 WHERE JobTypeID = @JTID", new { JTID = matchedJobType.JobTypeID });
                     }
 
                     string normInc = NormalizeDigits(incentiveText);
@@ -2366,3 +2534,7 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+

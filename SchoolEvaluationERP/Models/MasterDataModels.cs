@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
@@ -93,9 +93,17 @@ namespace SchoolEvaluationERP.Models
         public int AssignedCategoriesCount { get; set; }
         public List<EvaluatorDto> Members { get; set; } = new();
 
-        public string GroupTypeDisplay => MembersCount <= 1
-            ? "مقيم مسؤول عام (شخص واحد)"
-            : $"مجموعة مقيمين ({MembersCount} مقيمين)";
+        public bool IsSystemGroup { get; set; }
+        public string SystemGroupCode { get; set; } = string.Empty;
+        public int MaxAllowedCount { get; set; } = 3;
+
+        public string GroupTypeDisplay => IsSystemGroup
+            ? (SystemGroupCode == "ABSENCE"
+                ? $"مجموعة نظام افتراضية (الحد المسموح للغياب: {MaxAllowedCount} أيام)"
+                : $"مجموعة نظام افتراضية (الحد المسموح للتأخير: {MaxAllowedCount} مرات)")
+            : (MembersCount <= 1
+                ? "مقيم مسؤول عام (شخص واحد)"
+                : $"مجموعة مقيمين ({MembersCount} مقيمين)");
     }
 
     public class CategoryEvaluatorGroupSelectRow : INotifyPropertyChanged
@@ -268,3 +276,4 @@ namespace SchoolEvaluationERP.Models
         public bool IsCoverageComplete { get; set; }
     }
 }
+

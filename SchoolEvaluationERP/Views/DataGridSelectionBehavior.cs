@@ -9,8 +9,8 @@ using System.Windows.Threading;
 namespace SchoolEvaluationERP.Views
 {
     /// <summary>
-    /// يعمم سلوك التحديد المتعدد وإلغاء التحديد بالضغط العادي (غير السريع) مع دعم الدبل كليك السريع
-    /// على جميع جداول (DataGrid) في كافة شاشات ونوافذ النظام تلقائياً.
+    /// يعمم سلوك التحديد المتعدد وإلغاء التحديد بالضغط العادي (غير السريع) مع دعم الدبل كليك السريع،
+    /// ويمنع انضغاط أعمدة الجداول (تكدس الحروف عمودياً) مع إظهار شريط التمرير الأفقي تلقائياً عند تصغير النافذة.
     /// </summary>
     public static class DataGridSelectionBehavior
     {
@@ -32,6 +32,11 @@ namespace SchoolEvaluationERP.Views
 
             EventManager.RegisterClassHandler(
                 typeof(DataGrid),
+                FrameworkElement.LoadedEvent,
+                new RoutedEventHandler(OnGridLoaded));
+
+            EventManager.RegisterClassHandler(
+                typeof(DataGrid),
                 UIElement.PreviewMouseLeftButtonDownEvent,
                 new MouseButtonEventHandler(OnGridPreviewMouseLeftButtonDown));
 
@@ -49,6 +54,76 @@ namespace SchoolEvaluationERP.Views
                 typeof(DataGrid),
                 Control.MouseDoubleClickEvent,
                 new MouseButtonEventHandler(OnGridMouseDoubleClick));
+        }
+
+        private static void OnGridLoaded(object sender, RoutedEventArgs e)
+        {
+            if (sender is not DataGrid grid) return;
+
+            ScrollViewer.SetHorizontalScrollBarVisibility(grid, ScrollBarVisibility.Auto);
+            ScrollViewer.SetVerticalScrollBarVisibility(grid, ScrollBarVisibility.Auto);
+            ScrollViewer.SetCanContentScroll(grid, true);
+
+            EnforceReadableColumnWidths(grid);
+
+            grid.Columns.CollectionChanged -= Columns_CollectionChanged;
+            grid.Columns.CollectionChanged += Columns_CollectionChanged;
+
+            void Columns_CollectionChanged(object? s, System.Collections.Specialized.NotifyCollectionChangedEventArgs args)
+            {
+                EnforceReadableColumnWidths(grid);
+            }
+        }
+
+        /// <summary>
+        /// يضمن عدم تقلص أي عمود في أي جدول إلى عرض ضيق يسبب تكدس الحروف عمودياً،
+        /// ويجبر الجدول على إظهار شريط التمرير الأفقي (Horizontal ScrollBar) عند تصغير النافذة أو كثرة الكلام.
+        /// </summary>
+        public static void EnforceReadableColumnWidths(DataGrid grid)
+        {
+            foreach (var col in grid.Columns)
+            {
+                string headerText = col.Header as string ?? string.Empty;
+
+                if (col.Width.IsStar)
+                {
+                    double desiredMin = 135;
+                    if (headerText.Contains("تفصيل") ||
+                        headerText.Contains("مجموعات") ||
+                        headerText.Contains("المقيمين") ||
+                        headerText.Contains("المقيمون") ||
+                        headerText.Contains("البيان") ||
+                        headerText.Contains("الأوراق"))
+                    {
+                        desiredMin = 300;
+                    }
+                    else if (headerText.Contains("بواسطة") ||
+                             headerText.Contains("اسم") ||
+                             headerText.Contains("القسم") ||
+                             headerText.Contains("الحالة") ||
+                             headerText.Contains("إجمالي") ||
+                             headerText.Contains("تخصص"))
+                    {
+                        desiredMin = 175;
+                    }
+
+                    if (col.MinWidth < desiredMin)
+                    {
+                        col.MinWidth = desiredMin;
+                    }
+                }
+                else if (col.Width.IsAbsolute)
+                {
+                    if (col.MinWidth < col.Width.Value)
+                    {
+                        col.MinWidth = col.Width.Value;
+                    }
+                }
+                else if (col.MinWidth < 75)
+                {
+                    col.MinWidth = 75;
+                }
+            }
         }
 
         public static void CancelPendingDeselect()
@@ -74,7 +149,6 @@ namespace SchoolEvaluationERP.Views
             if (sender is not DataGrid grid || e.OriginalSource is not DependencyObject depObj)
                 return;
 
-            // تجاهل النقرات على رؤوس الأعمدة أو أشرطة التمرير أو الأزرار أو مربعات النص أو القوائم المنسدلة
             if (FindVisualParent<DataGridColumnHeader>(depObj) != null ||
                 FindVisualParent<ScrollBar>(depObj) != null ||
                 FindVisualParent<ButtonBase>(depObj) != null ||
@@ -101,8 +175,6 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            // إذا نقر المستخدم داخل خلية قابلة للكتابة والتحرير المباشر (مثل خلايا الدرجات أو نسبة الموازنة)،
-            // نسمح للخلية بفتح التحرير الطبيعي دون إلغاء تحديد السطر
             var clickedCell = FindVisualParent<DataGridCell>(depObj);
             bool isEditableCell = !grid.IsReadOnly &&
                                   clickedCell != null &&
@@ -116,7 +188,6 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            // في حالة الدبل كليك السريع: نلغي مؤقت إلغاء التحديد ونضمن بقاء السطر محدداً باللون الأزرق ليفتح فوراً
             if (e.ClickCount >= 2)
             {
                 CancelPendingDeselect();
@@ -130,7 +201,6 @@ namespace SchoolEvaluationERP.Views
             _isDoubleClickActive = false;
             CancelPendingDeselect();
 
-            // عند الضغط مع Ctrl أو Shift للتحديد المتعدد، نترك الجدول يعمل بطبيعته القياسية
             if (Keyboard.Modifiers != ModifierKeys.None)
             {
                 _rowEligibleForSlowDeselect = null;
@@ -142,7 +212,6 @@ namespace SchoolEvaluationERP.Views
 
             if (wasAlreadySelected && ReferenceEquals(clickedRow, _lastNewlySelectedRow) && msSinceFirstSelected > 380)
             {
-                // السطر محدد مسبقاً باللون الأزرق وضغط عليه المستخدم مرة ثانية (وليس بسرعة) -> مؤهل لإلغاء التحديد
                 _rowEligibleForSlowDeselect = clickedRow;
                 _mouseDownPoint = e.GetPosition(grid);
             }
@@ -153,7 +222,6 @@ namespace SchoolEvaluationERP.Views
             }
             else
             {
-                // سطر جديد يتم تحديده الآن باللون الأزرق
                 _rowEligibleForSlowDeselect = null;
                 _lastNewlySelectedRow = clickedRow;
                 _lastNewlySelectedTime = DateTime.UtcNow;
@@ -171,7 +239,6 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            // إذا سحب المستخدم الماوس لتحديد عدة صفوف (Drag Selection)، لا نلغي التحديد
             Point upPoint = e.GetPosition(grid);
             if (Math.Abs(upPoint.X - _mouseDownPoint.X) > 6 ||
                 Math.Abs(upPoint.Y - _mouseDownPoint.Y) > 6 ||
@@ -184,7 +251,6 @@ namespace SchoolEvaluationERP.Views
             var targetRow = _rowEligibleForSlowDeselect;
             _rowEligibleForSlowDeselect = null;
 
-            // انتظار 220 ملي ثانية للتأكد أن الضغطة ليست بداية دبل كليك سريع، ثم إلغاء التحديد
             CancelPendingDeselect();
             _pendingDeselectGrid = grid;
             _pendingDeselectRow = targetRow;

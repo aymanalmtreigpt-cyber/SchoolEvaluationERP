@@ -1,6 +1,5 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -21,61 +20,22 @@ namespace SchoolEvaluationERP.Views
 
     public partial class HistoryLogView : UserControl
     {
-        private const int FirstCriteriaColIndex = 5;
-
         private readonly WeeklyEvaluationService _service = new();
         private WeeklyEvaluationWorkspaceModel? _currentRecordWorkspace;
         private WeeklyEntrySheetModel? _activeDetailSheet;
-        private bool _isReadOnlyViewMode = true;
         private bool _isInitializingFilters;
-        private bool _isHorizontalAdvance = true;
-
-        private bool CanUpdate => AuthService.CurrentSession?.HasPermission("HistoryLog", "update") == true;
-        private bool CanDelete => AuthService.CurrentSession?.HasPermission("HistoryLog", "delete") == true;
 
         public HistoryLogView()
         {
             _isInitializingFilters = true;
             InitializeComponent();
             _isInitializingFilters = false;
-            UpdateDirectionButtonsVisual();
 
             Loaded += async (_, _) =>
             {
-                ApplyPermissionsToControls();
                 InitializeFilterCombos();
                 await RefreshHistoryRecordsGridAsync();
             };
-        }
-
-        private void BtnDetailNavHorizontal_Click(object sender, RoutedEventArgs e)
-        {
-            _isHorizontalAdvance = true;
-            UpdateDirectionButtonsVisual();
-        }
-
-        private void BtnDetailNavVertical_Click(object sender, RoutedEventArgs e)
-        {
-            _isHorizontalAdvance = false;
-            UpdateDirectionButtonsVisual();
-        }
-
-        private void UpdateDirectionButtonsVisual()
-        {
-            var primaryStyle = TryFindResource("PrimaryButton") as Style;
-            var secondaryStyle = TryFindResource("SecondaryButton") as Style;
-
-            if (primaryStyle != null && secondaryStyle != null)
-            {
-                BtnDetailNavHorizontal.Style = _isHorizontalAdvance ? primaryStyle : secondaryStyle;
-                BtnDetailNavVertical.Style = !_isHorizontalAdvance ? primaryStyle : secondaryStyle;
-            }
-        }
-
-        private void ApplyPermissionsToControls()
-        {
-            BtnEditSelectedRecord.Visibility = CanUpdate ? Visibility.Visible : Visibility.Collapsed;
-            BtnDeleteSelectedRecords.Visibility = CanDelete ? Visibility.Visible : Visibility.Collapsed;
         }
 
         private void InitializeFilterCombos()
@@ -118,7 +78,7 @@ namespace SchoolEvaluationERP.Views
 
             var records = await _service.GetEvaluationHistoryLogsAsync(evalSearch, yearFilter, monthFilter);
             GridHistoryRecords.ItemsSource = records;
-            TxtRecordsCountBadge.Text = $"إجمالي السجلات: {records.Count}";
+            TxtRecordsCountBadge.Text = $"إجمالي السجلات المحفوظة: {records.Count}";
         }
 
         private async void FilterControl_Changed(object sender, TextChangedEventArgs e)
@@ -146,7 +106,7 @@ namespace SchoolEvaluationERP.Views
         {
             if (GridHistoryRecords.SelectedItem is EvaluationRecordSummaryDto selected)
             {
-                await LoadRecordIntoDetailsAsync(selected.RecordID, openInReadOnlyMode: true, switchToDetailsTab: false);
+                await LoadRecordIntoDetailsAsync(selected.RecordID, switchToDetailsTab: false);
             }
         }
 
@@ -154,7 +114,7 @@ namespace SchoolEvaluationERP.Views
         {
             if (GridHistoryRecords.SelectedItem is EvaluationRecordSummaryDto selected)
             {
-                await LoadRecordIntoDetailsAsync(selected.RecordID, openInReadOnlyMode: true, switchToDetailsTab: true);
+                await LoadRecordIntoDetailsAsync(selected.RecordID, switchToDetailsTab: true);
             }
         }
 
@@ -163,7 +123,7 @@ namespace SchoolEvaluationERP.Views
             if (sender is Button btn && btn.DataContext is EvaluationRecordSummaryDto rowDto)
             {
                 GridHistoryRecords.SelectedItem = rowDto;
-                await LoadRecordIntoDetailsAsync(rowDto.RecordID, openInReadOnlyMode: true, switchToDetailsTab: true);
+                await LoadRecordIntoDetailsAsync(rowDto.RecordID, switchToDetailsTab: true);
             }
         }
 
@@ -175,87 +135,10 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            await LoadRecordIntoDetailsAsync(selected.RecordID, openInReadOnlyMode: true, switchToDetailsTab: true);
+            await LoadRecordIntoDetailsAsync(selected.RecordID, switchToDetailsTab: true);
         }
 
-        private async void BtnEditSelectedRecord_Click(object sender, RoutedEventArgs e)
-        {
-            if (!CanUpdate)
-            {
-                MessageBox.Show("عذراً، لا تملك صلاحية (تعديل) في شاشة سجل التقييمات والأرشيف.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            if (GridHistoryRecords.SelectedItem is not EvaluationRecordSummaryDto selected)
-            {
-                MessageBox.Show("يرجى تحديد سجل تقييم شهري من الجدول أولاً ثم الضغط على (✏ فتح وتعديل التقييم).", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            await LoadRecordIntoDetailsAsync(selected.RecordID, openInReadOnlyMode: false, switchToDetailsTab: true);
-        }
-
-        private async void BtnDeleteSelectedRecords_Click(object sender, RoutedEventArgs e)
-        {
-            var selectedList = GridHistoryRecords.SelectedItems.Cast<EvaluationRecordSummaryDto>().ToList();
-            if (selectedList.Count == 0)
-            {
-                MessageBox.Show("يرجى تحديد سجل تقييم واحد أو أكثر من الجدول لحذفه.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            string confirmText = selectedList.Count == 1
-                ? $"هل أنت متأكد من حذف تقييم المقيم ({selectedList[0].EvaluatorName}) لفترة ({selectedList[0].PeriodDisplay})؟"
-                : $"هل أنت متأكد من حذف ({selectedList.Count}) سجلات تقييم محددة دفعة واحدة؟";
-
-            var confirm = MessageBox.Show(confirmText, "تأكيد الحذف من الأرشيف", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (confirm != MessageBoxResult.Yes) return;
-
-            int deletedCount = 0;
-            string lastMsg = string.Empty;
-
-            foreach (var rec in selectedList)
-            {
-                var (isSuccess, msg) = await _service.DeleteEvaluationRecordAsync(rec.RecordID, "HistoryLog");
-                lastMsg = msg;
-                if (isSuccess)
-                {
-                    deletedCount++;
-                    if (_currentRecordWorkspace != null && _currentRecordWorkspace.RecordID == rec.RecordID)
-                    {
-                        ResetDetailsToEmpty();
-                    }
-                }
-            }
-
-            await RefreshHistoryRecordsGridAsync();
-            MessageBox.Show(
-                selectedList.Count == 1 ? lastMsg : $"تم حذف ({deletedCount}) من أصل ({selectedList.Count}) سجلات تقييم بنجاح.",
-                "نتيجة الحذف",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-        }
-
-        private void ResetDetailsToEmpty()
-        {
-            _currentRecordWorkspace = null;
-            _activeDetailSheet = null;
-            _isReadOnlyViewMode = true;
-            TxtDetailsHeaderTitle.Text = "لم يتم اختيار سجل تقييم بعد — اختر تقييماً شهرياً من تبويب (1. سجل التقييمات الشهرية والأرشيف)";
-            BadgeDetailsMode.Visibility = Visibility.Collapsed;
-
-            BtnUnlockEditInDetails.Visibility = Visibility.Collapsed;
-            BtnDetailFillAll.IsEnabled = false;
-            BtnDetailFillSelected.IsEnabled = false;
-            BtnDetailSaveChanges.IsEnabled = false;
-            GridRecordSheetScores.Columns.Clear();
-            GridRecordSheetScores.ItemsSource = null;
-            StackDetailSheetTabs.Children.Clear();
-            TxtDetailSheetAverageBadge.Text = "متوسط درجات الورقة: 0 / 100";
-            TxtDetailEmployeesCount.Text = "عدد الموظفين: 0";
-        }
-
-        private async Task LoadRecordIntoDetailsAsync(int recordId, bool openInReadOnlyMode, bool switchToDetailsTab)
+        private async Task LoadRecordIntoDetailsAsync(int recordId, bool switchToDetailsTab)
         {
             var workspace = await _service.LoadSavedRecordWorkspaceAsync(recordId);
             if (workspace == null)
@@ -265,7 +148,6 @@ namespace SchoolEvaluationERP.Views
             }
 
             _currentRecordWorkspace = workspace;
-            _isReadOnlyViewMode = openInReadOnlyMode;
 
             if (switchToDetailsTab)
             {
@@ -283,128 +165,87 @@ namespace SchoolEvaluationERP.Views
             if (_currentRecordWorkspace == null) return;
             _activeDetailSheet = sheet;
 
-            bool canEditNow = !_isReadOnlyViewMode && CanUpdate;
-
             string monthName = IncentiveCalculatorService.GetArabicMonthName(_currentRecordWorkspace.EvalMonth);
             string groupInfo = string.IsNullOrWhiteSpace(_currentRecordWorkspace.GroupName) ? "" : $" [{_currentRecordWorkspace.GroupName}]";
             TxtDetailsHeaderTitle.Text = $"المقيم: {_currentRecordWorkspace.EvaluatorName}{groupInfo}  |  شهر {monthName} {_currentRecordWorkspace.EvalYear} م  |  نسخة القالب: v{_currentRecordWorkspace.TemplateVersionNumber}";
 
-            TxtDetailsSubInfo.Text = $"أُدخل بواسطة: {_currentRecordWorkspace.CreatedByUserName}   |   تاريخ الإدخال: {_currentRecordWorkspace.CreatedAt:yyyy-MM-dd hh:mm tt}";
+            string lockNote = _currentRecordWorkspace.CanBeModified
+                ? "نشط (يمكن تعديله من شاشة 4. إدخال التقييمات الشهرية)"
+                : "مقفل تاريخياً (تم حذف القالب أو الموظفين من النظام)";
+
+            TxtDetailsSubInfo.Text = $"أُدخل بواسطة: {_currentRecordWorkspace.CreatedByUserName}   |   تاريخ الإدخال: {_currentRecordWorkspace.CreatedAt:yyyy-MM-dd hh:mm tt}   |   حالة القالب: {lockNote}";
 
             BadgeDetailsMode.Visibility = Visibility.Visible;
-            if (canEditNow)
-            {
-                BadgeDetailsMode.Background = new SolidColorBrush(Color.FromRgb(239, 246, 255));
-                BadgeDetailsMode.BorderBrush = new SolidColorBrush(Color.FromRgb(147, 197, 253));
-                TxtBadgeDetailsMode.Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175));
-                TxtBadgeDetailsMode.Text = "✏ وضع التعديل مفعل (يمكنك تعديل الدرجات والضغط على حفظ)";
-                BtnUnlockEditInDetails.Visibility = Visibility.Collapsed;
-            }
-            else
-            {
-                BadgeDetailsMode.Background = new SolidColorBrush(Color.FromRgb(254, 243, 199));
-                BadgeDetailsMode.BorderBrush = new SolidColorBrush(Color.FromRgb(252, 211, 77));
-                TxtBadgeDetailsMode.Foreground = new SolidColorBrush(Color.FromRgb(146, 64, 14));
-                TxtBadgeDetailsMode.Text = "🔒 وضع القراءة فقط (للتعديل اضغط تفعيل التعديل)";
-                BtnUnlockEditInDetails.Visibility = CanUpdate ? Visibility.Visible : Visibility.Collapsed;
-            }
 
-            BtnDetailFillAll.IsEnabled = canEditNow;
-            BtnDetailFillSelected.IsEnabled = canEditNow;
-            BtnDetailSaveChanges.IsEnabled = canEditNow;
-            BtnDetailSaveChanges.Visibility = canEditNow ? Visibility.Visible : Visibility.Collapsed;
-
-            RebuildDetailScoresDataGrid(canEditNow);
+            RebuildDetailScoresDataGrid();
             ApplyEmployeeSearchFilterToDetailGrid();
             RebuildDetailBottomSheetTabsBar();
             UpdateDetailSheetAverageBadge();
         }
 
-        private void BtnUnlockEditInDetails_Click(object sender, RoutedEventArgs e)
-        {
-            if (!CanUpdate)
-            {
-                MessageBox.Show("عذراً، لا تملك صلاحية (تعديل) في شاشة سجل التقييمات والأرشيف.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            _isReadOnlyViewMode = false;
-            if (_activeDetailSheet != null)
-            {
-                ActivateDetailSheet(_activeDetailSheet);
-            }
-        }
-
-        private void RebuildDetailScoresDataGrid(bool canEditNow)
+        private void RebuildDetailScoresDataGrid()
         {
             GridRecordSheetScores.Columns.Clear();
             if (_activeDetailSheet == null) return;
 
             var wrapStyle = TryFindResource("WrappingCellTextStyle") as Style;
 
-            // 0: م
             GridRecordSheetScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "م",
                 Binding = new Binding("RowOrder"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 45
+                Width = 45,
+                MinWidth = 45
             });
 
-            // 1: الاسم التقييمي
             GridRecordSheetScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "الاسم التقييمي للموظف",
                 Binding = new Binding("EvaluationName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 195
+                Width = 195,
+                MinWidth = 170
             });
 
-            // 2: الفرع
             GridRecordSheetScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "الفرع",
                 Binding = new Binding("BranchName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 85
+                Width = 85,
+                MinWidth = 75
             });
 
-            // 3: الوظيفة ونوعها
             GridRecordSheetScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "الوظيفة ونوعها",
                 Binding = new Binding("FullJobDisplay"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 135
+                Width = 140,
+                MinWidth = 120
             });
 
-            // 4: الحافز
             GridRecordSheetScores.Columns.Add(new DataGridTextColumn
             {
                 Header = "الحافز",
                 Binding = new Binding("IncentiveBadgeDisplay"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 95
+                Width = 95,
+                MinWidth = 85
             });
 
             var scoreDisplayStyle = new Style(typeof(TextBlock));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Center));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
-            scoreDisplayStyle.Setters.Add(new Setter(TextBlock.FontSizeProperty, 14.5));
+            scoreDisplayStyle.Setters.Add(new Setter(TextBlock.FontSizeProperty, 14.0));
             scoreDisplayStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(30, 64, 175))));
-
-            var scoreEditStyle = new Style(typeof(TextBox));
-            scoreEditStyle.Setters.Add(new Setter(TextBox.TextAlignmentProperty, TextAlignment.Center));
-            scoreEditStyle.Setters.Add(new Setter(TextBox.VerticalContentAlignmentProperty, VerticalAlignment.Center));
-            scoreEditStyle.Setters.Add(new Setter(TextBox.FontWeightProperty, FontWeights.Bold));
-            scoreEditStyle.Setters.Add(new Setter(TextBox.FontSizeProperty, 14.5));
-            scoreEditStyle.Setters.Add(new Setter(TextBox.BackgroundProperty, new SolidColorBrush(Color.FromRgb(239, 246, 255))));
 
             for (int i = 0; i < _activeDetailSheet.CriteriaColumns.Count; i++)
             {
@@ -413,18 +254,33 @@ namespace SchoolEvaluationERP.Views
                 var col = new DataGridTextColumn
                 {
                     Header = $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0})",
-                    Binding = new Binding($"[{i}]")
-                    {
-                        Mode = BindingMode.TwoWay,
-                        UpdateSourceTrigger = UpdateSourceTrigger.LostFocus
-                    },
+                    Binding = new Binding($"[{i}]"),
                     ElementStyle = scoreDisplayStyle,
-                    EditingElementStyle = scoreEditStyle,
-                    IsReadOnly = !canEditNow,
-                    Width = new DataGridLength(1, DataGridLengthUnitType.Star)
+                    IsReadOnly = true,
+                    Width = new DataGridLength(1, DataGridLengthUnitType.Star),
+                    MinWidth = 125
                 };
 
                 GridRecordSheetScores.Columns.Add(col);
+            }
+
+            if (_activeDetailSheet.EmployeeRows.Any(r => r.BalancingDelta != 0m))
+            {
+                var deltaStyle = new Style(typeof(TextBlock));
+                deltaStyle.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Center));
+                deltaStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
+                deltaStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
+                deltaStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(180, 83, 9))));
+
+                GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+                {
+                    Header = "⚖ نسبة الموازنة",
+                    Binding = new Binding("BalancingDeltaDisplay"),
+                    ElementStyle = deltaStyle,
+                    IsReadOnly = true,
+                    Width = 105,
+                    MinWidth = 95
+                });
             }
 
             var totalStyle = new Style(typeof(TextBlock));
@@ -439,7 +295,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("RawTotalDisplay"),
                 ElementStyle = totalStyle,
                 IsReadOnly = true,
-                Width = 100
+                Width = 105,
+                MinWidth = 95
             });
 
             var weightedStyle = new Style(typeof(TextBlock));
@@ -454,14 +311,9 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("WeightedScoreDisplay"),
                 ElementStyle = weightedStyle,
                 IsReadOnly = true,
-                Width = 115
+                Width = 115,
+                MinWidth = 105
             });
-
-            foreach (var row in _activeDetailSheet.EmployeeRows)
-            {
-                row.PropertyChanged -= DetailRow_PropertyChanged;
-                row.PropertyChanged += DetailRow_PropertyChanged;
-            }
         }
 
         private void ApplyEmployeeSearchFilterToDetailGrid()
@@ -490,40 +342,6 @@ namespace SchoolEvaluationERP.Views
         {
             TxtFilterSheetEmployee.Text = string.Empty;
             ApplyEmployeeSearchFilterToDetailGrid();
-        }
-
-        private void DetailRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName == nameof(WeeklyScoreRowViewModel.RawTotalOutOf100))
-            {
-                UpdateDetailSheetAverageBadge();
-            }
-        }
-
-        private void GridRecordSheetScores_BeginningEdit(object sender, DataGridBeginningEditEventArgs e)
-        {
-            if (_isReadOnlyViewMode || !CanUpdate)
-            {
-                e.Cancel = true;
-            }
-        }
-
-        private void GridRecordSheetScores_PreparingCellForEdit(object sender, DataGridPreparingCellForEditEventArgs e)
-        {
-            if (_activeDetailSheet == null || _isReadOnlyViewMode || !CanUpdate) return;
-
-            ScoreGridNavigationHelper.AttachEditorHandlers(
-                GridRecordSheetScores,
-                e,
-                FirstCriteriaColIndex,
-                _activeDetailSheet.CriteriaColumns.Count,
-                () => _isHorizontalAdvance,
-                UpdateDetailSheetAverageBadge);
-        }
-
-        private void GridRecordSheetScores_CellEditEnding(object sender, DataGridCellEditEndingEventArgs e)
-        {
-            Dispatcher.BeginInvoke(new Action(UpdateDetailSheetAverageBadge), System.Windows.Threading.DispatcherPriority.Background);
         }
 
         private void UpdateDetailSheetAverageBadge()
@@ -572,67 +390,6 @@ namespace SchoolEvaluationERP.Views
                 tabBtn.Click += (_, _) => ActivateDetailSheet(capturedSheet);
 
                 StackDetailSheetTabs.Children.Add(tabBtn);
-            }
-        }
-
-        private void BtnDetailFillAll_Click(object sender, RoutedEventArgs e)
-        {
-            if (_activeDetailSheet == null || _isReadOnlyViewMode || !CanUpdate) return;
-
-            foreach (var emp in _activeDetailSheet.EmployeeRows)
-            {
-                emp.FillFullMarks();
-            }
-
-            GridRecordSheetScores.Items.Refresh();
-            UpdateDetailSheetAverageBadge();
-        }
-
-        private void BtnDetailFillSelected_Click(object sender, RoutedEventArgs e)
-        {
-            if (_activeDetailSheet == null || _isReadOnlyViewMode || !CanUpdate) return;
-
-            var selectedRows = GridRecordSheetScores.SelectedItems.Cast<WeeklyScoreRowViewModel>().ToList();
-            if (selectedRows.Count == 0)
-            {
-                MessageBox.Show("يرجى تحديد موظف واحد أو أكثر من الجدول لمنحهم الدرجة الكاملة.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            foreach (var emp in selectedRows)
-            {
-                emp.FillFullMarks();
-            }
-
-            GridRecordSheetScores.Items.Refresh();
-            UpdateDetailSheetAverageBadge();
-        }
-
-        private async void BtnDetailSaveChanges_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentRecordWorkspace == null || _isReadOnlyViewMode || !CanUpdate) return;
-
-            GridRecordSheetScores.CommitEdit(DataGridEditingUnit.Cell, true);
-            GridRecordSheetScores.CommitEdit(DataGridEditingUnit.Row, true);
-
-            BtnDetailSaveChanges.IsEnabled = false;
-            var (isSuccess, message, _) = await _service.SaveMonthlyEvaluationAsync(_currentRecordWorkspace, "HistoryLog");
-            BtnDetailSaveChanges.IsEnabled = true;
-
-            MessageBox.Show(
-                message,
-                isSuccess ? "تم حفظ التعديلات" : "تنبيه التحقق من التقييم",
-                MessageBoxButton.OK,
-                isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
-
-            if (isSuccess)
-            {
-                _isReadOnlyViewMode = true;
-                if (_activeDetailSheet != null)
-                {
-                    ActivateDetailSheet(_activeDetailSheet);
-                }
-                await RefreshHistoryRecordsGridAsync();
             }
         }
     }

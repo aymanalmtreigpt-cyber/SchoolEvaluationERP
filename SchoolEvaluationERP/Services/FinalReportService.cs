@@ -472,7 +472,7 @@ namespace SchoolEvaluationERP.Services
                         {
                             col.Item().Text($"كشف القيد المحاسبي وصرف الحوافز الشهرية — شهر {monthName} / {report.Year} م")
                                .FontSize(15).Bold().FontColor(Colors.Blue.Darken4);
-                            col.Item().PaddingTop(3).Text($"الحساب المدين: {report.DebitAccountTitle}   |   سقف الحافز: {report.MaxIncentiveAmount:N0}   |   الحد الأدنى: {report.MinIncentiveAmount:N0}")
+                            col.Item().PaddingTop(3).Text($"الحساب المدين: {report.DebitAccountTitle}   |   حدود الحوافز: حسب أساسيات الحوافز المعتمدة لكل فئة")
                                .FontSize(10).SemiBold();
                         });
 
@@ -583,4 +583,5 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
 

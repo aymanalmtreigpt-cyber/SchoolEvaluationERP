@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -164,7 +164,8 @@ namespace SchoolEvaluationERP.Views
             _activeSheet = sheet;
 
             bool isExistingSavedRecord = _currentWorkspace.RecordID > 0;
-            bool hasPermissionToEdit = isExistingSavedRecord ? CanUpdate : CanInsert;
+            bool canBeModifiedInSystem = _currentWorkspace.CanBeModified;
+            bool hasPermissionToEdit = isExistingSavedRecord ? (CanUpdate && canBeModifiedInSystem) : CanInsert;
             bool canEditNow = !_isReadOnlyMode && hasPermissionToEdit;
 
             string monthName = IncentiveCalculatorService.GetArabicMonthName(_currentWorkspace.EvalMonth);
@@ -187,8 +188,10 @@ namespace SchoolEvaluationERP.Views
                     BadgeMonthStatus.Background = new SolidColorBrush(Color.FromRgb(254, 243, 199));
                     BadgeMonthStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(252, 211, 77));
                     TxtBadgeMonthStatus.Foreground = new SolidColorBrush(Color.FromRgb(146, 64, 14));
-                    TxtBadgeMonthStatus.Text = "🔒 تم إدخال تقييم هذا الشهر مسبقاً (وضع القراءة فقط)";
-                    BtnUnlockSavedMonthEdit.Visibility = CanUpdate ? Visibility.Visible : Visibility.Collapsed;
+                    TxtBadgeMonthStatus.Text = canBeModifiedInSystem
+                        ? "🔒 تم إدخال تقييم هذا الشهر مسبقاً (وضع القراءة فقط)"
+                        : "🔒 تم حذف القالب أو الموظفين — هذا السجل مقفل تاريخياً للقراءة فقط";
+                    BtnUnlockSavedMonthEdit.Visibility = (CanUpdate && canBeModifiedInSystem) ? Visibility.Visible : Visibility.Collapsed;
                 }
             }
             else
@@ -307,7 +310,7 @@ namespace SchoolEvaluationERP.Views
 
                 var col = new DataGridTextColumn
                 {
-                    Header = $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0})",
+                    Header = (_currentWorkspace != null && _currentWorkspace.IsCountBasedEvaluation) ? $"{crit.CriteriaTitle}\n(الحد المسموح: {_currentWorkspace.MaxAllowedCount} — ما زاد = 0)" : $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0})",
                     Binding = new Binding($"[{i}]")
                     {
                         Mode = BindingMode.TwoWay,
@@ -316,7 +319,7 @@ namespace SchoolEvaluationERP.Views
                     ElementStyle = scoreDisplayStyle,
                     EditingElementStyle = scoreEditStyle,
                     IsReadOnly = !canEditNow,
-                    Width = new DataGridLength(1, DataGridLengthUnitType.Star)
+                    Width = new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = 125
                 };
 
                 GridWeeklyScores.Columns.Add(col);
@@ -406,6 +409,46 @@ namespace SchoolEvaluationERP.Views
 
             decimal avg = _activeSheet.EmployeeRows.Average(r => r.RawTotalOutOf100);
             TxtSheetAverageBadge.Text = $"متوسط درجات الورقة الحالية ({_activeSheet.EmployeeRows.Count} موظف): {avg:0.##} من 100";
+        }
+
+        private async void BtnImportBulkMultiMonthExcel_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CanInsert && !CanUpdate)
+            {
+                MessageBox.Show("عذراً، لا تملك صلاحية إضافة أو تعديل درجات التقييم.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            int targetYear = CmbYear.SelectedItem is int y ? y : DateTime.Now.Year;
+
+            var ofd = new OpenFileDialog
+            {
+                Title = $"اختر ملف الإكسل المجمع لتقييمات الأشهر (7 و 8 و 9 و 10) لعام {targetYear} م",
+                Filter = "Excel Workbook (*.xlsx)|*.xlsx"
+            };
+
+            if (ofd.ShowDialog() == true)
+            {
+                BtnImportBulkMultiMonthExcel.IsEnabled = false;
+                string originalText = BtnImportBulkMultiMonthExcel.Content?.ToString() ?? "📦 سحب التقييمات المجمعة";
+                BtnImportBulkMultiMonthExcel.Content = "⏳ جاري سحب وحفظ تقييمات جميع الأشهر والمقيمين...";
+
+                var (isSuccess, summaryMessage) = await _service.ImportBulkMultiMonthEvaluationsFromExcelAsync(ofd.FileName, targetYear);
+
+                BtnImportBulkMultiMonthExcel.Content = originalText;
+                BtnImportBulkMultiMonthExcel.IsEnabled = true;
+
+                MessageBox.Show(
+                    summaryMessage,
+                    isSuccess ? "تقرير سحب التقييمات المجمعة" : "تنبيه سحب التقييمات",
+                    MessageBoxButton.OK,
+                    isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+                if (isSuccess)
+                {
+                    await LoadSelectedMonthWorkspaceAsync();
+                }
+            }
         }
 
         private void BtnImportScoresExcel_Click(object sender, RoutedEventArgs e)
@@ -542,3 +585,8 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+

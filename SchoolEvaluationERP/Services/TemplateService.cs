@@ -1,4 +1,5 @@
-﻿using System;
+﻿#nullable disable warnings
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data;
@@ -53,9 +54,6 @@ namespace SchoolEvaluationERP.Services
             return true;
         }
 
-        /// <summary>
-        /// يعرض جميع المقيمين بشكل فردي (مع اسم مجموعتهم) لإنشاء قالب مستقل لكل مقيم.
-        /// </summary>
         public async Task<List<EvaluatorDto>> SearchEvaluatorsAsync(string query = "")
         {
             using var conn = new SqlConnection(_connectionString);
@@ -69,7 +67,7 @@ namespace SchoolEvaluationERP.Services
                 INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
                 WHERE ev.IsActive = 1 AND eg.IsActive = 1
                   AND (@Q = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
-                ORDER BY eg.GroupName ASC, ev.EvaluatorName ASC";
+                ORDER BY ISNULL(eg.IsSystemGroup, 0) DESC, eg.GroupName ASC, ev.EvaluatorName ASC";
 
             var list = await conn.QueryAsync<EvaluatorDto>(sql, new
             {
@@ -87,9 +85,6 @@ namespace SchoolEvaluationERP.Services
             return count > 0;
         }
 
-        /// <summary>
-        /// يجلب فقط الفئات المرتبطة بمجموعة المقيم المحدد (بدون الفرع).
-        /// </summary>
         public async Task<List<TemplateCategoryOptionDto>> GetCategoriesForEvaluatorAsync(int evaluatorId)
         {
             using var conn = new SqlConnection(_connectionString);
@@ -100,14 +95,17 @@ namespace SchoolEvaluationERP.Services
                        c.CategoryName,
                        (SELECT COUNT(1)
                         FROM dbo.Employees e
-                        INNER JOIN dbo.EmployeeEvaluators ee ON ee.EmployeeID = e.EmployeeID
                         WHERE e.IsActive = 1
                           AND e.IsContinuing = 1
                           AND e.CategoryID = c.CategoryID
-                          AND ee.EvaluatorID = @EvalID) AS AssignedEmployeesCount
+                          AND (
+                              EXISTS (SELECT 1 FROM dbo.EmployeeEvaluators ee WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID)
+                              OR ISNULL(eg.IsSystemGroup, 0) = 1
+                          )) AS AssignedEmployeesCount
                 FROM dbo.Categories c
                 INNER JOIN dbo.CategoryEvaluatorGroups ceg ON ceg.CategoryID = c.CategoryID
                 INNER JOIN dbo.Evaluators ev ON ev.GroupID = ceg.GroupID
+                INNER JOIN dbo.EvaluatorGroups eg ON eg.GroupID = ev.GroupID
                 WHERE c.IsActive = 1 AND ev.EvaluatorID = @EvalID
                 ORDER BY c.CategoryID ASC";
 
@@ -115,9 +113,6 @@ namespace SchoolEvaluationERP.Services
             return list.ToList();
         }
 
-        /// <summary>
-        /// يجلب خيارات الفروع لورقة التقييم: خيار (جميع الفروع / كلاهما) + الفروع المنشأة مع عدد الموظفين المستمرين المسندين لهذا المقيم في الفئة المحددة.
-        /// </summary>
         public async Task<List<TemplateBranchOptionDto>> GetBranchOptionsForEvaluatorCategoryAsync(int evaluatorId, int categoryId)
         {
             using var conn = new SqlConnection(_connectionString);
@@ -154,9 +149,6 @@ namespace SchoolEvaluationERP.Services
             return result;
         }
 
-        /// <summary>
-        /// يجلب الموظفين المستمرين المسندين لهذا المقيم في الفئة المحددة والفرع المحدد (أو جميع الفروع عند TargetBranchID == null).
-        /// </summary>
         public async Task<List<SheetEmployeeRowModel>> GetEligibleEmployeesForSheetAsync(
             int? targetCategoryId,
             int? targetBranchId,
@@ -164,6 +156,38 @@ namespace SchoolEvaluationERP.Services
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
+
+            var evalGroupInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT ev.GroupID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                FROM dbo.Evaluators ev
+                INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE ev.EvaluatorID = @EvalID", new { EvalID = evaluatorId });
+
+            bool isSystemGroup = evalGroupInfo != null && Convert.ToBoolean(evalGroupInfo.IsSystemGroup);
+            int groupId = evalGroupInfo != null ? (int)evalGroupInfo.GroupID : 0;
+
+            if (isSystemGroup)
+            {
+                string sysSql = @"
+                    SELECT e.EmployeeID, e.EvaluationName, e.SystemName,
+                           e.BranchID, b.BranchName,
+                           j.JobTitle, jt.JobTypeName,
+                           c.CategoryName,
+                           e.HasIncentive, e.IsContinuing,
+                           ceg.WeightScore AS EvaluatorWeightForEmployee
+                    FROM dbo.Employees e
+                    INNER JOIN dbo.CategoryEvaluatorGroups ceg ON e.CategoryID = ceg.CategoryID AND ceg.GroupID = @GID
+                    INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
+                    INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
+                    INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
+                    INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
+                    WHERE e.IsActive = 1
+                      AND e.IsContinuing = 1
+                    ORDER BY c.CategoryID ASC, b.BranchName ASC, e.EvaluationName ASC";
+
+                var sysList = await conn.QueryAsync<SheetEmployeeRowModel>(sysSql, new { GID = groupId });
+                return sysList.ToList();
+            }
 
             if (targetCategoryId == null || targetCategoryId <= 0)
                 return new List<SheetEmployeeRowModel>();
@@ -215,6 +239,7 @@ namespace SchoolEvaluationERP.Services
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
+            await SyncAllSystemGroupTemplatesAsync(conn);
 
             string sql = @"
                 SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, eg.GroupName,
@@ -231,7 +256,7 @@ namespace SchoolEvaluationERP.Services
                 LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
                 WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0
                   AND (@Search = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
-                ORDER BY t.CreatedAt DESC";
+                ORDER BY ISNULL(eg.IsSystemGroup, 0) DESC, t.CreatedAt DESC";
 
             var list = (await conn.QueryAsync<TemplateSummaryDto>(sql, new
             {
@@ -263,13 +288,19 @@ namespace SchoolEvaluationERP.Services
             await EnsureSchemaUpToDateAsync(conn);
 
             var header = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
-                SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, ISNULL(eg.GroupName, N'') AS GroupName, t.VersionNumber, t.CreatedAt
+                SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName,
+                       ISNULL(eg.GroupName, N'') AS GroupName, t.VersionNumber, t.CreatedAt,
+                       ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup,
+                       ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode,
+                       ISNULL(eg.MaxAllowedCount, 3) AS MaxAllowedCount
                 FROM dbo.Templates t
                 INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
                 LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
                 WHERE t.TemplateID = @ID", new { ID = templateId });
 
             if (header == null) return null;
+
+            bool isSys = Convert.ToBoolean(header.IsSystemGroup);
 
             var model = new TemplateFullModel
             {
@@ -279,14 +310,17 @@ namespace SchoolEvaluationERP.Services
                 EvaluatorName = header.EvaluatorName,
                 GroupName = header.GroupName,
                 VersionNumber = header.VersionNumber,
-                CreatedAt = header.CreatedAt
+                CreatedAt = header.CreatedAt,
+                IsSystemTemplate = isSys,
+                SystemGroupCode = (header.SystemGroupCode as string) ?? string.Empty,
+                MaxAllowedCount = (int)header.MaxAllowedCount
             };
 
             var sheets = (await conn.QueryAsync<TemplateSheetModel>(@"
                 SELECT ts.SheetID,
                        ts.SheetName,
                        ts.TargetCategoryID,
-                       ISNULL(c.CategoryName, ts.TargetCategoryName) AS TargetCategoryName,
+                       CASE WHEN @IsSys = 1 THEN ts.TargetCategoryName ELSE ISNULL(c.CategoryName, ts.TargetCategoryName) END AS TargetCategoryName,
                        ts.TargetBranchID,
                        ISNULL(b.BranchName, N'جميع الفروع (كلاهما)') AS TargetBranchName,
                        ts.SortOrder
@@ -294,7 +328,7 @@ namespace SchoolEvaluationERP.Services
                 LEFT JOIN dbo.Categories c ON ts.TargetCategoryID = c.CategoryID
                 LEFT JOIN dbo.Branches b ON ts.TargetBranchID = b.BranchID
                 WHERE ts.TemplateID = @ID
-                ORDER BY ts.SortOrder ASC", new { ID = templateId })).ToList();
+                ORDER BY ts.SortOrder ASC", new { ID = templateId, IsSys = isSys ? 1 : 0 })).ToList();
 
             foreach (var sheet in sheets)
             {
@@ -306,7 +340,6 @@ namespace SchoolEvaluationERP.Services
 
                 sheet.CriteriaColumns = new ObservableCollection<CriteriaColumnModel>(criteria);
 
-                // يظهر في معاينة وتصميم القالب الموظفون المستمرون فقط؛ أما المنقطع فيُخفى تلقائياً
                 var empRows = await conn.QueryAsync<SheetEmployeeRowModel>(@"
                     SELECT se.EmployeeID, e.EvaluationName, e.SystemName,
                            e.BranchID, b.BranchName,
@@ -394,6 +427,16 @@ namespace SchoolEvaluationERP.Services
             {
                 await conn.OpenAsync();
             }
+
+            var evalGroupInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT ev.GroupID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                FROM dbo.Evaluators ev
+                INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE ev.EvaluatorID = @EvalID", new { EvalID = model.EvaluatorID });
+
+            bool isSystemGroup = evalGroupInfo != null && Convert.ToBoolean(evalGroupInfo.IsSystemGroup);
+            int sysGroupId = evalGroupInfo != null ? (int)evalGroupInfo.GroupID : 0;
+
             using var tx = conn.BeginTransaction();
 
             try
@@ -452,6 +495,8 @@ namespace SchoolEvaluationERP.Services
                 }
 
                 int sheetOrder = 1;
+                var keptEmployeeIdsInTemplate = new HashSet<int>();
+
                 foreach (var sheet in model.Sheets)
                 {
                     int? dbBranchId = (sheet.TargetBranchID.HasValue && sheet.TargetBranchID.Value > 0)
@@ -469,7 +514,7 @@ namespace SchoolEvaluationERP.Services
                         SheetName = sheet.SheetName.Trim(),
                         TargetCategoryID = sheet.TargetCategoryID!.Value,
                         TargetBranchID = dbBranchId,
-                        TargetCategoryName = sheet.CategoryWithBranchDisplay.Trim(),
+                        TargetCategoryName = isSystemGroup ? sheet.TargetCategoryName.Trim() : sheet.CategoryWithBranchDisplay.Trim(),
                         SortOrder = sheetOrder++
                     }, tx);
 
@@ -491,6 +536,7 @@ namespace SchoolEvaluationERP.Services
                     int rowOrder = 1;
                     foreach (var emp in sheet.EmployeeRows)
                     {
+                        keptEmployeeIdsInTemplate.Add(emp.EmployeeID);
                         await conn.ExecuteAsync(@"
                             INSERT INTO dbo.SheetEmployees (SheetID, EmployeeID, RowOrder)
                             VALUES (@SheetID, @EmpID, @RowOrder)",
@@ -500,6 +546,32 @@ namespace SchoolEvaluationERP.Services
                                 EmpID = emp.EmployeeID,
                                 RowOrder = rowOrder++
                             }, tx);
+                    }
+                }
+
+                // حفظ ذاكرة الموظفين الذين تم حذفهم يدوياً أو إرجاعهم يدوياً في قالب الغياب أو التأخير
+                if (isSystemGroup && sysGroupId > 0)
+                {
+                    var allEligibleIds = (await conn.QueryAsync<int>(@"
+                        SELECT e.EmployeeID
+                        FROM dbo.Employees e
+                        INNER JOIN dbo.CategoryEvaluatorGroups ceg ON e.CategoryID = ceg.CategoryID
+                        WHERE ceg.GroupID = @GID AND e.IsActive = 1 AND e.IsContinuing = 1",
+                        new { GID = sysGroupId }, tx)).ToList();
+
+                    await conn.ExecuteAsync(
+                        "DELETE FROM dbo.SystemTemplateExcludedEmployees WHERE GroupID = @GID",
+                        new { GID = sysGroupId }, tx);
+
+                    foreach (int empId in allEligibleIds)
+                    {
+                        if (!keptEmployeeIdsInTemplate.Contains(empId))
+                        {
+                            await conn.ExecuteAsync(@"
+                                INSERT INTO dbo.SystemTemplateExcludedEmployees (GroupID, EmployeeID)
+                                VALUES (@GID, @EmpID)",
+                                new { GID = sysGroupId, EmpID = empId }, tx);
+                        }
                     }
                 }
 
@@ -528,6 +600,18 @@ namespace SchoolEvaluationERP.Services
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
 
+            int isSys = await conn.ExecuteScalarAsync<int>(@"
+                SELECT ISNULL(eg.IsSystemGroup, 0)
+                FROM dbo.Templates t
+                INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE t.TemplateID = @ID", new { ID = templateId });
+
+            if (isSys == 1)
+            {
+                return (false, "هذا القالب يتبع مجموعة نظام افتراضية (الغياب / التأخير) ويتم إدارته تلقائياً وفق الفئات المخصصة له.");
+            }
+
             int evalCount = await conn.ExecuteScalarAsync<int>(
                 "SELECT COUNT(1) FROM dbo.EvaluationRecords WHERE TemplateID = @ID",
                 new { ID = templateId });
@@ -543,7 +627,7 @@ namespace SchoolEvaluationERP.Services
                 return (true, "تم حذف قالب التقييم نهائياً بنجاح.");
             }
         }
-    
+
         public async Task<List<EvaluatorEmployeesSheetExportDto>> GetAllEvaluatorsWithAssignedEmployeesAsync()
         {
             using var conn = new SqlConnection(_connectionString);
@@ -611,5 +695,216 @@ namespace SchoolEvaluationERP.Services
 
             return evaluators;
         }
+
+        public async Task SyncAllSystemGroupTemplatesAsync(SqlConnection? externalConn = null)
+        {
+            bool ownConn = externalConn == null;
+            var conn = externalConn ?? new SqlConnection(_connectionString);
+            try
+            {
+                if (ownConn)
+                {
+                    await EnsureSchemaUpToDateAsync(conn);
+                }
+
+                var sysGroupIds = (await conn.QueryAsync<int>(
+                    "SELECT GroupID FROM dbo.EvaluatorGroups WHERE IsSystemGroup = 1 AND IsActive = 1")).ToList();
+
+                foreach (int gid in sysGroupIds)
+                {
+                    await EnsureSystemGroupTemplateAsync(gid, conn);
+                }
+            }
+            finally
+            {
+                if (ownConn) conn.Dispose();
+            }
+        }
+
+        public async Task EnsureSystemGroupTemplateAsync(int groupID, SqlConnection? externalConn = null)
+        {
+            bool ownConn = externalConn == null;
+            var conn = externalConn ?? new SqlConnection(_connectionString);
+            try
+            {
+                if (ownConn)
+                {
+                    await EnsureSchemaUpToDateAsync(conn);
+                }
+
+                var groupInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "SELECT GroupID, GroupName, IsSystemGroup, SystemGroupCode FROM dbo.EvaluatorGroups WHERE GroupID = @GID",
+                    new { GID = groupID });
+
+                if (groupInfo == null || !Convert.ToBoolean(groupInfo.IsSystemGroup))
+                    return;
+
+                string sysCode = (groupInfo.SystemGroupCode as string) ?? string.Empty;
+                string groupName = (groupInfo.GroupName as string) ?? (sysCode == "ABSENCE" ? "الغياب" : "التأخير");
+
+                var primaryEvaluator = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "SELECT TOP 1 EvaluatorID FROM dbo.Evaluators WHERE GroupID = @GID AND IsActive = 1 ORDER BY EvaluatorID ASC",
+                    new { GID = groupID });
+
+                if (primaryEvaluator == null) return;
+                int evaluatorId = (int)primaryEvaluator.EvaluatorID;
+
+                var assignedCategories = (await conn.QueryAsync<dynamic>(@"
+                    SELECT c.CategoryID, c.CategoryName
+                    FROM dbo.CategoryEvaluatorGroups ceg
+                    INNER JOIN dbo.Categories c ON ceg.CategoryID = c.CategoryID
+                    WHERE ceg.GroupID = @GID AND c.IsActive = 1
+                    ORDER BY c.CategoryID ASC",
+                    new { GID = groupID })).ToList();
+
+                if (assignedCategories.Count == 0)
+                {
+                    await conn.ExecuteAsync(@"
+                        UPDATE dbo.Templates
+                        SET IsCurrentVersion = 0, IsDeleted = 1
+                        WHERE EvaluatorID = @EvalID AND IsCurrentVersion = 1 AND IsDeleted = 0",
+                        new { EvalID = evaluatorId });
+                    return;
+                }
+
+                var catIds = assignedCategories.Select(c => (int)c.CategoryID).ToList();
+                string catsSummary = string.Join("، ", assignedCategories.Select(c => (string)c.CategoryName));
+                if (catsSummary.Length > 130)
+                {
+                    catsSummary = $"جميع الفئات المرتبطة ({assignedCategories.Count} فئات)";
+                }
+
+                string criteriaTitle = (sysCode == "ABSENCE" || groupName.Contains("غياب"))
+                    ? "عدد أيام الغياب"
+                    : "عدد مرات التأخير";
+
+                string sheetTitle = $"ورقة {groupName} الشاملة";
+
+                await conn.ExecuteAsync(@"
+                    INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID)
+                    SELECT e.EmployeeID, @EvalID
+                    FROM dbo.Employees e
+                    WHERE e.CategoryID IN @CatIDs
+                      AND NOT EXISTS (
+                          SELECT 1 FROM dbo.EmployeeEvaluators ee
+                          WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
+                      );",
+                    new { EvalID = evaluatorId, CatIDs = catIds });
+
+                var activeEmpIds = (await conn.QueryAsync<int>(@"
+                    SELECT e.EmployeeID
+                    FROM dbo.Employees e
+                    INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
+                    WHERE e.IsActive = 1 AND e.IsContinuing = 1
+                      AND e.CategoryID IN @CatIDs
+                      AND NOT EXISTS (
+                          SELECT 1 FROM dbo.SystemTemplateExcludedEmployees see
+                          WHERE see.GroupID = @GID AND see.EmployeeID = e.EmployeeID
+                      )
+                    ORDER BY e.CategoryID ASC, b.BranchName ASC, e.EvaluationName ASC",
+                    new { CatIDs = catIds, GID = groupID })).ToList();
+
+                var currentTemplate = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                    SELECT TOP 1 TemplateID, TemplateGroupGuid, VersionNumber
+                    FROM dbo.Templates
+                    WHERE EvaluatorID = @EvalID AND IsCurrentVersion = 1 AND IsDeleted = 0
+                    ORDER BY TemplateID DESC",
+                    new { EvalID = evaluatorId });
+
+                int targetTemplateId;
+
+                if (currentTemplate == null)
+                {
+                    targetTemplateId = await conn.ExecuteScalarAsync<int>(@"
+                        INSERT INTO dbo.Templates (TemplateGroupGuid, EvaluatorID, VersionNumber, IsCurrentVersion, IsDeleted, CreatedAt)
+                        VALUES (NEWID(), @EvalID, 1, 1, 0, SYSDATETIME());
+                        SELECT CAST(SCOPE_IDENTITY() AS INT);",
+                        new { EvalID = evaluatorId });
+                }
+                else
+                {
+                    targetTemplateId = (int)currentTemplate.TemplateID;
+                }
+
+                var existingSheet = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                    SELECT TOP 1 SheetID
+                    FROM dbo.TemplateSheets
+                    WHERE TemplateID = @TID
+                    ORDER BY SortOrder ASC, SheetID ASC",
+                    new { TID = targetTemplateId });
+
+                int targetSheetId;
+                if (existingSheet == null)
+                {
+                    targetSheetId = await conn.ExecuteScalarAsync<int>(@"
+                        INSERT INTO dbo.TemplateSheets (TemplateID, SheetName, TargetCategoryID, TargetBranchID, TargetCategoryName, SortOrder)
+                        VALUES (@TID, @Name, @CatID, NULL, @CatName, 1);
+                        SELECT CAST(SCOPE_IDENTITY() AS INT);",
+                        new
+                        {
+                            TID = targetTemplateId,
+                            Name = sheetTitle,
+                            CatID = catIds[0],
+                            CatName = catsSummary
+                        });
+                }
+                else
+                {
+                    targetSheetId = (int)existingSheet.SheetID;
+                    await conn.ExecuteAsync(@"
+                        UPDATE dbo.TemplateSheets
+                        SET SheetName = @Name, TargetCategoryID = @CatID, TargetBranchID = NULL, TargetCategoryName = @CatName
+                        WHERE SheetID = @SID;
+                        DELETE FROM dbo.TemplateSheets WHERE TemplateID = @TID AND SheetID <> @SID;",
+                        new
+                        {
+                            Name = sheetTitle,
+                            CatID = catIds[0],
+                            CatName = catsSummary,
+                            SID = targetSheetId,
+                            TID = targetTemplateId
+                        });
+                }
+
+                var existingCriteria = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                    SELECT TOP 1 CriteriaID
+                    FROM dbo.SheetCriteria
+                    WHERE SheetID = @SID
+                    ORDER BY ColumnOrder ASC, CriteriaID ASC",
+                    new { SID = targetSheetId });
+
+                if (existingCriteria == null)
+                {
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO dbo.SheetCriteria (SheetID, CriteriaTitle, MaxScore, ColumnOrder)
+                        VALUES (@SID, @Title, 100, 1)",
+                        new { SID = targetSheetId, Title = criteriaTitle });
+                }
+                else
+                {
+                    int critId = (int)existingCriteria.CriteriaID;
+                    await conn.ExecuteAsync(@"
+                        UPDATE dbo.SheetCriteria SET CriteriaTitle = @Title, MaxScore = 100, ColumnOrder = 1 WHERE CriteriaID = @CID;
+                        DELETE FROM dbo.SheetCriteria WHERE SheetID = @SID AND CriteriaID <> @CID;",
+                        new { Title = criteriaTitle, CID = critId, SID = targetSheetId });
+                }
+
+                await conn.ExecuteAsync("DELETE FROM dbo.SheetEmployees WHERE SheetID = @SID", new { SID = targetSheetId });
+
+                int rowOrd = 1;
+                foreach (int empId in activeEmpIds)
+                {
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO dbo.SheetEmployees (SheetID, EmployeeID, RowOrder)
+                        VALUES (@SID, @EmpID, @RowOrd)",
+                        new { SID = targetSheetId, EmpID = empId, RowOrd = rowOrd++ });
+                }
+            }
+            finally
+            {
+                if (ownConn) conn.Dispose();
+            }
+        }
     }
 }
+

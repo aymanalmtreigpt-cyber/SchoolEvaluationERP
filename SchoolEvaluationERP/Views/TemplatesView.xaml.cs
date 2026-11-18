@@ -687,7 +687,7 @@ namespace SchoolEvaluationERP.Views
                         Source = string.Empty
                     },
                     ElementStyle = wrapStyle,
-                    Width = new DataGridLength(1, DataGridLengthUnitType.Star)
+                    Width = new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = 125
                 };
 
                 GridSheetPreview.Columns.Add(col);
@@ -1050,4 +1050,6 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
 

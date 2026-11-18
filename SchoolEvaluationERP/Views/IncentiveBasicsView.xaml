@@ -5,166 +5,144 @@
              FontFamily="Segoe UI">
 
     <Grid Margin="4">
-        <Border Style="{StaticResource CardStyle}" Padding="16">
+        <Border Style="{StaticResource CardStyle}" Padding="14">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="*" MinHeight="180"/>
                 </Grid.RowDefinitions>
 
-                <!-- 0: شريط العنوان وزر الحفظ المرن -->
-                <Grid Grid.Row="0" Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="12"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
+                <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                    <TextBlock Text="أساسيات الحوافز وتخصيص الحد الأعلى والأدنى لكل فئة"
+                               FontSize="16.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
+                    <TextBlock Text="حدد السنة والشهر، وعدّل (الحد الأعلى للحافز) أو (الحد الأدنى للحافز) أمام أي فئة؛ سيتم تحديث إجمالي قيمة الحافز للفئة وللشهر بالكامل بشكل مباشر ولحظي أثناء الكتابة."
+                               FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,6"/>
 
-                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                        <TextBlock Text="أساسيات الحوافز وتخصيص الحد الأعلى والأدنى لكل فئة"
-                                   FontSize="17" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
-                        <TextBlock Text="حدد السنة والشهر، وعدّل (الحد الأعلى للحافز) أو (الحد الأدنى للحافز) أمام أي فئة؛ سيتم تحديث إجمالي قيمة الحافز للفئة وللشهر بالكامل بشكل مباشر ولحظي أثناء الكتابة."
-                                   FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,0,0"/>
-                    </StackPanel>
-
-                    <WrapPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <WrapPanel Orientation="Horizontal">
                         <Button x:Name="BtnReloadMonthData" Content="🔄 تحديث قراءات الشهر"
-                                Style="{StaticResource SecondaryButton}" Height="36" Padding="12,0" Margin="0,0,8,4"
+                                Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,0,8,4"
                                 Click="BtnReloadMonthData_Click"/>
 
                         <Button x:Name="BtnSaveCategoryIncentives" Content="💾 حفظ واعتماد حدود الحوافز للفئات"
-                                Style="{StaticResource PrimaryButton}" Height="36" Padding="16,0" Margin="0,0,0,4"
+                                Style="{StaticResource PrimaryButton}" Height="35" Padding="16,0" Margin="0,0,0,4"
                                 Click="BtnSaveCategoryIncentives_Click"/>
                     </WrapPanel>
-                </Grid>
+                </StackPanel>
 
-                <!-- 1: شريط تحديد السنة والشهر وأداة التطبيق السريع (مرن بالكامل عبر WrapPanel) -->
-                <Border Grid.Row="1" Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
+                <Border Grid.Row="1" Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
                     <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <StackPanel Width="115" Margin="0,2,12,4">
+                        <StackPanel Width="110" Margin="0,2,10,4">
                             <TextBlock Text="1. السنة:" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,3"/>
-                            <ComboBox x:Name="CmbYear" Style="{StaticResource ModernComboBox}" Height="35"
+                            <ComboBox x:Name="CmbYear" Style="{StaticResource ModernComboBox}" Height="34"
                                       SelectionChanged="PeriodFilter_SelectionChanged"/>
                         </StackPanel>
 
-                        <StackPanel Width="170" Margin="0,2,14,4">
-                            <TextBlock Text="2. الشهر (تقييمات الشهر):" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,3"/>
-                            <ComboBox x:Name="CmbMonth" Style="{StaticResource ModernComboBox}" Height="35"
+                        <StackPanel Width="160" Margin="0,2,12,4">
+                            <TextBlock Text="2. الشهر:" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,3"/>
+                            <ComboBox x:Name="CmbMonth" Style="{StaticResource ModernComboBox}" Height="34"
                                       DisplayMemberPath="DisplayText" SelectedValuePath="MonthNumber"
                                       SelectionChanged="PeriodFilter_SelectionChanged"/>
                         </StackPanel>
 
                         <CheckBox x:Name="ChkRoundTo50" Content="التقريب لأقرب 50 ريالاً"
-                                  IsChecked="True" FontWeight="SemiBold" VerticalAlignment="Bottom" Margin="0,0,18,12"
+                                  IsChecked="True" FontWeight="SemiBold" VerticalAlignment="Bottom" Margin="0,0,14,10"
                                   Checked="ChkRoundTo50_Changed" Unchecked="ChkRoundTo50_Changed"/>
 
-                        <StackPanel Width="135" Margin="0,2,10,4">
+                        <StackPanel Width="130" Margin="0,2,8,4">
                             <TextBlock Text="حد أعلى موحد سريع:" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,3"/>
-                            <TextBox x:Name="TxtQuickMax" Style="{StaticResource ModernTextBox}" Height="35" Text="7000" TextAlignment="Center" FontWeight="Bold"/>
+                            <TextBox x:Name="TxtQuickMax" Style="{StaticResource ModernTextBox}" Height="34" Text="7000" TextAlignment="Center" FontWeight="Bold"/>
                         </StackPanel>
 
-                        <StackPanel Width="135" Margin="0,2,10,4">
+                        <StackPanel Width="130" Margin="0,2,8,4">
                             <TextBlock Text="حد أدنى موحد سريع:" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,3"/>
-                            <TextBox x:Name="TxtQuickMin" Style="{StaticResource ModernTextBox}" Height="35" Text="1500" TextAlignment="Center" FontWeight="Bold"/>
+                            <TextBox x:Name="TxtQuickMin" Style="{StaticResource ModernTextBox}" Height="34" Text="1500" TextAlignment="Center" FontWeight="Bold"/>
                         </StackPanel>
 
                         <Button x:Name="BtnApplyQuickToSelected" Content="✔ تطبيق على المحدد"
-                                Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" VerticalAlignment="Bottom" Margin="0,0,8,4"
-                                ToolTip="تطبيق الحد الأعلى والأدنى المكتوبين على الفئات المحددة في الجدول"
+                                Style="{StaticResource SecondaryButton}" Height="34" Padding="12,0" VerticalAlignment="Bottom" Margin="0,0,8,4"
                                 Click="BtnApplyQuickToSelected_Click"/>
 
                         <Button x:Name="BtnApplyQuickToAll" Content="⚡ تعميم على كل الفئات"
-                                Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" VerticalAlignment="Bottom" Margin="0,0,0,4"
-                                ToolTip="تعميم الحد الأعلى والأدنى المكتوبين على جميع الفئات دفعة واحدة"
+                                Style="{StaticResource SecondaryButton}" Height="34" Padding="12,0" VerticalAlignment="Bottom" Margin="0,0,0,4"
                                 Click="BtnApplyQuickToAll_Click"/>
                     </WrapPanel>
                 </Border>
 
-                <!-- 2: بطاقات الملخص الفوري لإجمالي الحوافز للشهر المحدد -->
-                <Grid Grid.Row="2" Margin="0,0,0,10">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="10"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="10"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="10"/>
-                        <ColumnDefinition Width="1.35*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <Border Grid.Column="0" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,7">
+                <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,8">
+                    <Border Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,6" Margin="0,0,8,6" MinWidth="155">
                         <StackPanel>
-                            <TextBlock Text="إجمالي الفئات المنشأة" FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="TxtKpiTotalCategories" Text="0 فئة" FontSize="17" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,2,0,0"/>
+                            <TextBlock Text="إجمالي الفئات المنشأة" FontSize="11.5" Foreground="{StaticResource TextSecondaryBrush}"/>
+                            <TextBlock x:Name="TxtKpiTotalCategories" Text="0 فئة" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="2" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="8" Padding="12,7">
+                    <Border Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="8" Padding="12,6" Margin="0,0,8,6" MinWidth="165">
                         <StackPanel>
-                            <TextBlock Text="الموظفون المستمرون (بحافز)" FontSize="12" Foreground="#1E40AF" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="TxtKpiEligibleEmployees" Text="0 موظف" FontSize="17" FontWeight="Bold" Foreground="#1E40AF" Margin="0,2,0,0"/>
+                            <TextBlock Text="الموظفون المستمرون (بحافز)" FontSize="11.5" Foreground="#1E40AF"/>
+                            <TextBlock x:Name="TxtKpiEligibleEmployees" Text="0 موظف" FontSize="16" FontWeight="Bold" Foreground="#1E40AF" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="4" Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="8" Padding="12,7">
+                    <Border Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="8" Padding="12,6" Margin="0,0,8,6" MinWidth="175">
                         <StackPanel>
-                            <TextBlock Text="إجمالي المستحقين للشهر (> 80%)" FontSize="12" Foreground="#047857" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="TxtKpiDeservingEmployees" Text="0 مستحق" FontSize="17" FontWeight="Bold" Foreground="#047857" Margin="0,2,0,0"/>
+                            <TextBlock Text="إجمالي المستحقين للشهر (> 80%)" FontSize="11.5" Foreground="#047857"/>
+                            <TextBlock x:Name="TxtKpiDeservingEmployees" Text="0 مستحق" FontSize="16" FontWeight="Bold" Foreground="#047857" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
 
-                    <Border Grid.Column="6" Background="#FEF3C7" BorderBrush="#FCD34D" BorderThickness="1.5" CornerRadius="8" Padding="12,7">
+                    <Border Background="#FEF3C7" BorderBrush="#FCD34D" BorderThickness="1.5" CornerRadius="8" Padding="14,6" Margin="0,0,0,6" MinWidth="240">
                         <StackPanel>
-                            <TextBlock x:Name="TxtKpiMonthTitle" Text="إجمالي قيمة الحوافز للشهر المحدد (تحديث مباشر)" FontSize="12" FontWeight="SemiBold" Foreground="#92400E" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="TxtKpiGrandTotalIncentives" Text="0 ريال" FontSize="18" FontWeight="Bold" Foreground="#92400E" Margin="0,2,0,0"/>
+                            <TextBlock x:Name="TxtKpiMonthTitle" Text="إجمالي قيمة الحوافز للشهر المحدد (تحديث مباشر)" FontSize="11.5" FontWeight="SemiBold" Foreground="#92400E"/>
+                            <TextBlock x:Name="TxtKpiGrandTotalIncentives" Text="0 ريال" FontSize="17" FontWeight="Bold" Foreground="#92400E" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
-                </Grid>
+                </WrapPanel>
 
-                <!-- 3: جدول الفئات بأعمدة مرنة -->
                 <DataGrid Grid.Row="3" x:Name="GridCategoryIncentives"
                           CanUserSortColumns="False"
                           SelectionMode="Extended"
-                          SelectionUnit="FullRow">
+                          SelectionUnit="FullRow"
+                          HorizontalScrollBarVisibility="Auto"
+                          VerticalScrollBarVisibility="Auto">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Header="م" Binding="{Binding RowNumber}" IsReadOnly="True" Width="45"/>
-                        <DataGridTextColumn Header="اسم الفئة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" IsReadOnly="True" Width="1.2*" MinWidth="130"/>
-                        <DataGridTextColumn Header="الموظفون المستمرون" Binding="{Binding TotalContinuingEmployeesCount}" IsReadOnly="True" Width="0.8*" MinWidth="90"/>
-                        <DataGridTextColumn Header="المشمولون بالحافز" Binding="{Binding IncentiveEligibleEmployeesCount}" IsReadOnly="True" Width="0.8*" MinWidth="90"/>
-                        <DataGridTextColumn Header="متوسط تقييم الفئة بالشهر" Binding="{Binding CategoryAverageDisplay}" IsReadOnly="True" Width="0.9*" MinWidth="105"/>
-                        <DataGridTextColumn Header="عدد المستحقين (> 80%)" Binding="{Binding DeservingEmployeesCount}" IsReadOnly="True" Width="0.9*" MinWidth="105"/>
+                        <DataGridTextColumn Header="م" Binding="{Binding RowNumber}" IsReadOnly="True" Width="45" MinWidth="45"/>
+                        <DataGridTextColumn Header="اسم الفئة" Binding="{Binding CategoryName}" ElementStyle="{StaticResource WrappingCellTextStyle}" IsReadOnly="True" Width="150" MinWidth="135"/>
+                        <DataGridTextColumn Header="الموظفون المستمرون" Binding="{Binding TotalContinuingEmployeesCount}" IsReadOnly="True" Width="110" MinWidth="100"/>
+                        <DataGridTextColumn Header="المشمولون بالحافز" Binding="{Binding IncentiveEligibleEmployeesCount}" IsReadOnly="True" Width="110" MinWidth="100"/>
+                        <DataGridTextColumn Header="متوسط تقييم الفئة بالشهر" Binding="{Binding CategoryAverageDisplay}" IsReadOnly="True" Width="130" MinWidth="115"/>
+                        <DataGridTextColumn Header="عدد المستحقين (> 80%)" Binding="{Binding DeservingEmployeesCount}" IsReadOnly="True" Width="125" MinWidth="115"/>
 
-                        <DataGridTemplateColumn Header="الحد الأعلى للحافز (100%)" Width="1.1*" MinWidth="135">
+                        <DataGridTemplateColumn Header="الحد الأعلى للحافز (100%)" Width="160" MinWidth="145">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBox Text="{Binding MaxIncentiveText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             Style="{StaticResource ModernTextBox}" Height="33" Margin="6,2"
+                                             Style="{StaticResource ModernTextBox}" Height="32" Margin="6,2"
                                              FontWeight="Bold" Foreground="#1E40AF" TextAlignment="Center"
                                              IsEnabled="{Binding DataContext.CanEditIncentives, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
 
-                        <DataGridTemplateColumn Header="الحد الأدنى للحافز (> 80%)" Width="1.1*" MinWidth="135">
+                        <DataGridTemplateColumn Header="الحد الأدنى للحافز (> 80%)" Width="160" MinWidth="145">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBox Text="{Binding MinIncentiveText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             Style="{StaticResource ModernTextBox}" Height="33" Margin="6,2"
+                                             Style="{StaticResource ModernTextBox}" Height="32" Margin="6,2"
                                              FontWeight="Bold" Foreground="#047857" TextAlignment="Center"
                                              IsEnabled="{Binding DataContext.CanEditIncentives, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
 
-                        <DataGridTemplateColumn Header="إجمالي قيمة الحافز للفئة (مباشر)" Width="1.3*" MinWidth="150">
+                        <DataGridTemplateColumn Header="إجمالي قيمة الحافز للفئة (مباشر)" Width="*" MinWidth="175">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <Border Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="10,4" Margin="6,2" HorizontalAlignment="Stretch">
                                         <TextBlock Text="{Binding CategoryTotalIncentiveDisplay}"
                                                    FontWeight="Bold" FontSize="13.5" Foreground="#047857"
-                                                   TextAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                                   TextAlignment="Center" VerticalAlignment="Center"/>
                                     </Border>
                                 </DataTemplate>
                             </DataGridTemplateColumn.CellTemplate>
