@@ -73,13 +73,15 @@ namespace SchoolEvaluationERP.Services
             var categories = (await conn.QueryAsync<CategoryIncentiveSettingRow>(@"
                 SELECT c.CategoryID,
                        c.CategoryName,
-                       c.MaxIncentiveAmount,
-                       c.MinIncentiveAmount,
+                       ISNULL(mci.MaxIncentiveAmount, 0) AS MaxIncentiveAmount,
+                       ISNULL(mci.MinIncentiveAmount, 0) AS MinIncentiveAmount,
                        (SELECT COUNT(1) FROM dbo.Employees e WHERE e.CategoryID = c.CategoryID AND e.IsActive = 1 AND e.IsContinuing = 1) AS TotalContinuingEmployeesCount,
                        (SELECT COUNT(1) FROM dbo.Employees e WHERE e.CategoryID = c.CategoryID AND e.IsActive = 1 AND e.IsContinuing = 1 AND e.HasIncentive = 1) AS IncentiveEligibleEmployeesCount
                 FROM dbo.Categories c
+                LEFT JOIN dbo.MonthlyCategoryIncentives mci
+                    ON mci.CategoryID = c.CategoryID AND mci.EvalYear = @Year AND mci.EvalMonth = @Month
                 WHERE c.IsActive = 1
-                ORDER BY c.CategoryID ASC")).ToList();
+                ORDER BY c.CategoryID ASC", new { Year = year, Month = month })).ToList();
 
             var employees = (await conn.QueryAsync<EmployeeRawMonthlyScoreItem>(@"
                 SELECT e.EmployeeID, e.CategoryID, e.SystemName, b.BranchName, e.HasIncentive
@@ -206,6 +208,8 @@ namespace SchoolEvaluationERP.Services
         }
 
         public async Task<(bool IsSuccess, string Message)> SaveCategoriesIncentiveSettingsAsync(
+            int year,
+            int month,
             IEnumerable<CategoryIncentiveSettingRow> rows)
         {
             if (!CheckPermission("IncentiveBasics", "update", out string permErr) &&
@@ -214,6 +218,9 @@ namespace SchoolEvaluationERP.Services
             {
                 return (false, permErr);
             }
+
+            if (year < 2020 || year > 2100 || month < 1 || month > 12)
+                return (false, "يرجى اختيار سنة وشهر صحيحين لحفظ حدود الحوافز.");
 
             var list = rows?.ToList() ?? new List<CategoryIncentiveSettingRow>();
             if (list.Count == 0)
@@ -224,7 +231,7 @@ namespace SchoolEvaluationERP.Services
                 if (r.MaxIncentiveAmount < 0m || r.MinIncentiveAmount < 0m)
                     return (false, $"لا يمكن إدخال قيمة سالبة في الفئة ({r.CategoryName}).");
 
-                if (r.MinIncentiveAmount > r.MaxIncentiveAmount && r.MaxIncentiveAmount > 0m)
+                if (r.MinIncentiveAmount > r.MaxIncentiveAmount)
                     return (false, $"في الفئة ({r.CategoryName}): الحد الأدنى للحافز ({r.MinIncentiveAmount:N0}) لا يمكن أن يكون أكبر من الحد الأعلى ({r.MaxIncentiveAmount:N0}).");
             }
 
@@ -235,12 +242,23 @@ namespace SchoolEvaluationERP.Services
                 foreach (var r in list)
                 {
                     await conn.ExecuteAsync(@"
-                        UPDATE dbo.Categories
-                        SET MaxIncentiveAmount = @MaxAmt,
-                            MinIncentiveAmount = @MinAmt
-                        WHERE CategoryID = @CatID",
+                        IF EXISTS (SELECT 1 FROM dbo.MonthlyCategoryIncentives WHERE EvalYear = @Year AND EvalMonth = @Month AND CategoryID = @CatID)
+                        BEGIN
+                            UPDATE dbo.MonthlyCategoryIncentives
+                            SET MaxIncentiveAmount = @MaxAmt,
+                                MinIncentiveAmount = @MinAmt,
+                                UpdatedAt = SYSDATETIME()
+                            WHERE EvalYear = @Year AND EvalMonth = @Month AND CategoryID = @CatID;
+                        END
+                        ELSE
+                        BEGIN
+                            INSERT INTO dbo.MonthlyCategoryIncentives (EvalYear, EvalMonth, CategoryID, MaxIncentiveAmount, MinIncentiveAmount, UpdatedAt)
+                            VALUES (@Year, @Month, @CatID, @MaxAmt, @MinAmt, SYSDATETIME());
+                        END",
                         new
                         {
+                            Year = year,
+                            Month = month,
                             MaxAmt = r.MaxIncentiveAmount,
                             MinAmt = r.MinIncentiveAmount,
                             CatID = r.CategoryID
@@ -248,7 +266,8 @@ namespace SchoolEvaluationERP.Services
                 }
 
                 await tx.CommitAsync();
-                return (true, $"تم حفظ واعتماد حدود الحوافز (الحد الأعلى والحد الأدنى) لـ ({list.Count}) فئة بنجاح.");
+                string arMonth = IncentiveCalculatorService.GetArabicMonthName(month);
+                return (true, $"تم حفظ واعتماد حدود الحوافز لشهر ({arMonth} {year} م) لـ ({list.Count}) فئة بنجاح.");
             }
             catch (Exception ex)
             {

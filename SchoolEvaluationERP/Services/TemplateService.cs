@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Data;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Data.SqlClient;
@@ -13,6 +14,7 @@ namespace SchoolEvaluationERP.Services
 {
     public class TemplateService
     {
+        private static readonly SemaphoreSlim _systemTemplateSyncLock = new(1, 1);
         private readonly string _connectionString;
 
         public TemplateService() : this(AppConfigService.ConnectionString) { }
@@ -235,11 +237,14 @@ namespace SchoolEvaluationERP.Services
             return list.ToList();
         }
 
-        public async Task<List<TemplateSummaryDto>> GetCurrentTemplatesAsync(string evaluatorSearch = "")
+        public async Task<List<TemplateSummaryDto>> GetCurrentTemplatesAsync(string evaluatorSearch = "", bool syncSystemTemplates = true)
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
-            await SyncAllSystemGroupTemplatesAsync(conn);
+            if (syncSystemTemplates && string.IsNullOrWhiteSpace(evaluatorSearch))
+            {
+                await SyncAllSystemGroupTemplatesAsync(conn);
+            }
 
             string sql = @"
                 SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, eg.GroupName,
@@ -445,7 +450,51 @@ namespace SchoolEvaluationERP.Services
                 int newVersionNumber = model.VersionNumber;
                 bool createdNewVersion = false;
 
-                if (isNew)
+                if (isSystemGroup)
+                {
+                    var canonicalId = await conn.ExecuteScalarAsync<int?>(@"
+                        SELECT TOP 1 TemplateID
+                        FROM dbo.Templates
+                        WHERE EvaluatorID = @EvalID
+                        ORDER BY
+                            (SELECT COUNT(1) FROM dbo.EvaluationRecords er WHERE er.TemplateID = dbo.Templates.TemplateID) DESC,
+                            TemplateID ASC",
+                        new { EvalID = model.EvaluatorID }, tx);
+
+                    if (canonicalId.HasValue && canonicalId.Value > 0)
+                    {
+                        targetTemplateId = canonicalId.Value;
+                        newVersionNumber = 1;
+
+                        await conn.ExecuteAsync(@"
+                            UPDATE dbo.EvaluationRecords
+                            SET TemplateID = @TID
+                            WHERE EvaluatorID = @EvalID AND TemplateID <> @TID;
+
+                            UPDATE dbo.Templates
+                            SET IsCurrentVersion = 1, IsDeleted = 0, VersionNumber = 1
+                            WHERE TemplateID = @TID;
+
+                            DELETE FROM dbo.Templates
+                            WHERE EvaluatorID = @EvalID AND TemplateID <> @TID;",
+                            new { TID = targetTemplateId, EvalID = model.EvaluatorID }, tx);
+                    }
+                    else
+                    {
+                        targetTemplateId = await conn.ExecuteScalarAsync<int>(@"
+                            INSERT INTO dbo.Templates (TemplateGroupGuid, EvaluatorID, VersionNumber, IsCurrentVersion, IsDeleted, CreatedByUserID)
+                            VALUES (@GroupGuid, @EvalID, 1, 1, 0, @UserID);
+                            SELECT CAST(SCOPE_IDENTITY() AS INT);",
+                            new
+                            {
+                                GroupGuid = model.TemplateGroupGuid == Guid.Empty ? Guid.NewGuid() : model.TemplateGroupGuid,
+                                EvalID = model.EvaluatorID,
+                                UserID = AuthService.CurrentSession?.UserID
+                            }, tx);
+                        newVersionNumber = 1;
+                    }
+                }
+                else if (isNew)
                 {
                     string insertTemplateSql = @"
                         INSERT INTO dbo.Templates (TemplateGroupGuid, EvaluatorID, VersionNumber, IsCurrentVersion, IsDeleted, CreatedByUserID)
@@ -469,10 +518,14 @@ namespace SchoolEvaluationERP.Services
                     {
                         createdNewVersion = true;
                         await conn.ExecuteAsync(
-                            "UPDATE dbo.Templates SET IsCurrentVersion = 0 WHERE TemplateID = @ID",
-                            new { ID = model.TemplateID }, tx);
+                            "UPDATE dbo.Templates SET IsCurrentVersion = 0 WHERE TemplateID = @ID OR TemplateGroupGuid = @GroupGuid",
+                            new { ID = model.TemplateID, GroupGuid = model.TemplateGroupGuid }, tx);
 
-                        newVersionNumber = model.VersionNumber + 1;
+                        int maxVer = await conn.ExecuteScalarAsync<int>(
+                            "SELECT ISNULL(MAX(VersionNumber), @Ver) FROM dbo.Templates WHERE TemplateGroupGuid = @GroupGuid",
+                            new { Ver = model.VersionNumber, GroupGuid = model.TemplateGroupGuid }, tx);
+
+                        newVersionNumber = maxVer + 1;
                         string insertNewVerSql = @"
                             INSERT INTO dbo.Templates (TemplateGroupGuid, EvaluatorID, VersionNumber, IsCurrentVersion, IsDeleted, CreatedByUserID)
                             VALUES (@GroupGuid, @EvalID, @Ver, 1, 0, @UserID);
@@ -497,55 +550,172 @@ namespace SchoolEvaluationERP.Services
                 int sheetOrder = 1;
                 var keptEmployeeIdsInTemplate = new HashSet<int>();
 
-                foreach (var sheet in model.Sheets)
+                if (isSystemGroup)
                 {
+                    var sheet = model.Sheets[0];
                     int? dbBranchId = (sheet.TargetBranchID.HasValue && sheet.TargetBranchID.Value > 0)
                         ? sheet.TargetBranchID.Value
                         : null;
 
-                    string insertSheetSql = @"
-                        INSERT INTO dbo.TemplateSheets (TemplateID, SheetName, TargetCategoryID, TargetBranchID, TargetCategoryName, SortOrder)
-                        VALUES (@TemplateID, @SheetName, @TargetCategoryID, @TargetBranchID, @TargetCategoryName, @SortOrder);
-                        SELECT CAST(SCOPE_IDENTITY() AS INT);";
+                    int? existingSheetId = await conn.ExecuteScalarAsync<int?>(@"
+                        SELECT TOP 1 SheetID
+                        FROM dbo.TemplateSheets
+                        WHERE TemplateID = @TID
+                        ORDER BY SortOrder ASC, SheetID ASC",
+                        new { TID = targetTemplateId }, tx);
 
-                    int newSheetId = await conn.ExecuteScalarAsync<int>(insertSheetSql, new
+                    int targetSheetId;
+                    if (!existingSheetId.HasValue || existingSheetId.Value <= 0)
                     {
-                        TemplateID = targetTemplateId,
-                        SheetName = sheet.SheetName.Trim(),
-                        TargetCategoryID = sheet.TargetCategoryID!.Value,
-                        TargetBranchID = dbBranchId,
-                        TargetCategoryName = isSystemGroup ? sheet.TargetCategoryName.Trim() : sheet.CategoryWithBranchDisplay.Trim(),
-                        SortOrder = sheetOrder++
-                    }, tx);
-
-                    int colOrder = 1;
-                    foreach (var col in sheet.CriteriaColumns)
-                    {
-                        await conn.ExecuteAsync(@"
-                            INSERT INTO dbo.SheetCriteria (SheetID, CriteriaTitle, MaxScore, ColumnOrder)
-                            VALUES (@SheetID, @Title, @MaxScore, @ColOrder)",
+                        targetSheetId = await conn.ExecuteScalarAsync<int>(@"
+                            INSERT INTO dbo.TemplateSheets (TemplateID, SheetName, TargetCategoryID, TargetBranchID, TargetCategoryName, SortOrder)
+                            VALUES (@TemplateID, @SheetName, @TargetCategoryID, @TargetBranchID, @TargetCategoryName, 1);
+                            SELECT CAST(SCOPE_IDENTITY() AS INT);",
                             new
                             {
-                                SheetID = newSheetId,
-                                Title = col.CriteriaTitle.Trim(),
-                                MaxScore = Math.Round(col.MaxScore, 0, MidpointRounding.AwayFromZero),
-                                ColOrder = colOrder++
+                                TemplateID = targetTemplateId,
+                                SheetName = sheet.SheetName.Trim(),
+                                TargetCategoryID = sheet.TargetCategoryID!.Value,
+                                TargetBranchID = dbBranchId,
+                                TargetCategoryName = sheet.TargetCategoryName.Trim()
+                            }, tx);
+                    }
+                    else
+                    {
+                        targetSheetId = existingSheetId.Value;
+                        await conn.ExecuteAsync(@"
+                            UPDATE dbo.TemplateSheets
+                            SET SheetName = @SheetName,
+                                TargetCategoryID = @TargetCategoryID,
+                                TargetBranchID = @TargetBranchID,
+                                TargetCategoryName = @TargetCategoryName,
+                                SortOrder = 1
+                            WHERE SheetID = @SID;
+                            DELETE FROM dbo.TemplateSheets WHERE TemplateID = @TID AND SheetID <> @SID;",
+                            new
+                            {
+                                SheetName = sheet.SheetName.Trim(),
+                                TargetCategoryID = sheet.TargetCategoryID!.Value,
+                                TargetBranchID = dbBranchId,
+                                TargetCategoryName = sheet.TargetCategoryName.Trim(),
+                                SID = targetSheetId,
+                                TID = targetTemplateId
                             }, tx);
                     }
 
+                    var firstCol = sheet.CriteriaColumns[0];
+                    int? existingCritId = await conn.ExecuteScalarAsync<int?>(@"
+                        SELECT TOP 1 CriteriaID
+                        FROM dbo.SheetCriteria
+                        WHERE SheetID = @SID
+                        ORDER BY ColumnOrder ASC, CriteriaID ASC",
+                        new { SID = targetSheetId }, tx);
+
+                    if (!existingCritId.HasValue || existingCritId.Value <= 0)
+                    {
+                        await conn.ExecuteAsync(@"
+                            INSERT INTO dbo.SheetCriteria (SheetID, CriteriaTitle, MaxScore, ColumnOrder)
+                            VALUES (@SID, @Title, @MaxScore, 1)",
+                            new
+                            {
+                                SID = targetSheetId,
+                                Title = firstCol.CriteriaTitle.Trim(),
+                                MaxScore = Math.Round(firstCol.MaxScore, 0, MidpointRounding.AwayFromZero)
+                            }, tx);
+                    }
+                    else
+                    {
+                        await conn.ExecuteAsync(@"
+                            UPDATE dbo.SheetCriteria
+                            SET CriteriaTitle = @Title, MaxScore = @MaxScore, ColumnOrder = 1
+                            WHERE CriteriaID = @CID;
+                            DELETE FROM dbo.SheetCriteria WHERE SheetID = @SID AND CriteriaID <> @CID;",
+                            new
+                            {
+                                Title = firstCol.CriteriaTitle.Trim(),
+                                MaxScore = Math.Round(firstCol.MaxScore, 0, MidpointRounding.AwayFromZero),
+                                CID = existingCritId.Value,
+                                SID = targetSheetId
+                            }, tx);
+                    }
+
+                    await conn.ExecuteAsync("DELETE FROM dbo.SheetEmployees WHERE SheetID = @SID", new { SID = targetSheetId }, tx);
+
                     int rowOrder = 1;
+                    var insertedSheetEmpIds = new HashSet<int>();
                     foreach (var emp in sheet.EmployeeRows)
                     {
+                        if (!insertedSheetEmpIds.Add(emp.EmployeeID))
+                            continue;
+
                         keptEmployeeIdsInTemplate.Add(emp.EmployeeID);
                         await conn.ExecuteAsync(@"
                             INSERT INTO dbo.SheetEmployees (SheetID, EmployeeID, RowOrder)
                             VALUES (@SheetID, @EmpID, @RowOrder)",
                             new
                             {
-                                SheetID = newSheetId,
+                                SheetID = targetSheetId,
                                 EmpID = emp.EmployeeID,
                                 RowOrder = rowOrder++
                             }, tx);
+                    }
+                }
+                else
+                {
+                    foreach (var sheet in model.Sheets)
+                    {
+                        int? dbBranchId = (sheet.TargetBranchID.HasValue && sheet.TargetBranchID.Value > 0)
+                            ? sheet.TargetBranchID.Value
+                            : null;
+
+                        string insertSheetSql = @"
+                            INSERT INTO dbo.TemplateSheets (TemplateID, SheetName, TargetCategoryID, TargetBranchID, TargetCategoryName, SortOrder)
+                            VALUES (@TemplateID, @SheetName, @TargetCategoryID, @TargetBranchID, @TargetCategoryName, @SortOrder);
+                            SELECT CAST(SCOPE_IDENTITY() AS INT);";
+
+                        int newSheetId = await conn.ExecuteScalarAsync<int>(insertSheetSql, new
+                        {
+                            TemplateID = targetTemplateId,
+                            SheetName = sheet.SheetName.Trim(),
+                            TargetCategoryID = sheet.TargetCategoryID!.Value,
+                            TargetBranchID = dbBranchId,
+                            TargetCategoryName = sheet.CategoryWithBranchDisplay.Trim(),
+                            SortOrder = sheetOrder++
+                        }, tx);
+
+                        int colOrder = 1;
+                        foreach (var col in sheet.CriteriaColumns)
+                        {
+                            await conn.ExecuteAsync(@"
+                                INSERT INTO dbo.SheetCriteria (SheetID, CriteriaTitle, MaxScore, ColumnOrder)
+                                VALUES (@SheetID, @Title, @MaxScore, @ColOrder)",
+                                new
+                                {
+                                    SheetID = newSheetId,
+                                    Title = col.CriteriaTitle.Trim(),
+                                    MaxScore = Math.Round(col.MaxScore, 0, MidpointRounding.AwayFromZero),
+                                    ColOrder = colOrder++
+                                }, tx);
+                        }
+
+                        int rowOrder = 1;
+                        var insertedSheetEmpIds = new HashSet<int>();
+                        foreach (var emp in sheet.EmployeeRows)
+                        {
+                            if (!insertedSheetEmpIds.Add(emp.EmployeeID))
+                                continue;
+
+                            keptEmployeeIdsInTemplate.Add(emp.EmployeeID);
+                            await conn.ExecuteAsync(@"
+                                INSERT INTO dbo.SheetEmployees (SheetID, EmployeeID, RowOrder)
+                                VALUES (@SheetID, @EmpID, @RowOrder)",
+                                new
+                                {
+                                    SheetID = newSheetId,
+                                    EmpID = emp.EmployeeID,
+                                    RowOrder = rowOrder++
+                                }, tx);
+                        }
                     }
                 }
 
@@ -573,6 +743,28 @@ namespace SchoolEvaluationERP.Services
                                 new { GID = sysGroupId, EmpID = empId }, tx);
                         }
                     }
+
+                    await conn.ExecuteAsync(@"
+                        DELETE ee
+                        FROM dbo.EmployeeEvaluators ee
+                        INNER JOIN dbo.SystemTemplateExcludedEmployees see
+                            ON see.EmployeeID = ee.EmployeeID AND see.GroupID = @GID
+                        WHERE ee.EvaluatorID = @EvalID;
+
+                        INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID)
+                        SELECT e.EmployeeID, @EvalID
+                        FROM dbo.Employees e
+                        INNER JOIN dbo.CategoryEvaluatorGroups ceg ON e.CategoryID = ceg.CategoryID
+                        WHERE ceg.GroupID = @GID AND e.IsActive = 1 AND e.IsContinuing = 1
+                          AND NOT EXISTS (
+                              SELECT 1 FROM dbo.SystemTemplateExcludedEmployees see
+                              WHERE see.GroupID = @GID AND see.EmployeeID = e.EmployeeID
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM dbo.EmployeeEvaluators ee
+                              WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
+                          );",
+                        new { GID = sysGroupId, EvalID = model.EvaluatorID }, tx);
                 }
 
                 await tx.CommitAsync();
@@ -723,6 +915,7 @@ namespace SchoolEvaluationERP.Services
 
         public async Task EnsureSystemGroupTemplateAsync(int groupID, SqlConnection? externalConn = null)
         {
+            await _systemTemplateSyncLock.WaitAsync();
             bool ownConn = externalConn == null;
             var conn = externalConn ?? new SqlConnection(_connectionString);
             try
@@ -781,34 +974,33 @@ namespace SchoolEvaluationERP.Services
                 string sheetTitle = $"ورقة {groupName} الشاملة";
 
                 await conn.ExecuteAsync(@"
+                    DELETE ee
+                    FROM dbo.EmployeeEvaluators ee
+                    INNER JOIN dbo.SystemTemplateExcludedEmployees see
+                        ON see.EmployeeID = ee.EmployeeID AND see.GroupID = @GID
+                    WHERE ee.EvaluatorID = @EvalID;
+
                     INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID)
                     SELECT e.EmployeeID, @EvalID
                     FROM dbo.Employees e
                     WHERE e.CategoryID IN @CatIDs
                       AND NOT EXISTS (
-                          SELECT 1 FROM dbo.EmployeeEvaluators ee
-                          WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
-                      );",
-                    new { EvalID = evaluatorId, CatIDs = catIds });
-
-                var activeEmpIds = (await conn.QueryAsync<int>(@"
-                    SELECT e.EmployeeID
-                    FROM dbo.Employees e
-                    INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                    WHERE e.IsActive = 1 AND e.IsContinuing = 1
-                      AND e.CategoryID IN @CatIDs
-                      AND NOT EXISTS (
                           SELECT 1 FROM dbo.SystemTemplateExcludedEmployees see
                           WHERE see.GroupID = @GID AND see.EmployeeID = e.EmployeeID
                       )
-                    ORDER BY e.CategoryID ASC, b.BranchName ASC, e.EvaluationName ASC",
-                    new { CatIDs = catIds, GID = groupID })).ToList();
+                      AND NOT EXISTS (
+                          SELECT 1 FROM dbo.EmployeeEvaluators ee
+                          WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
+                      );",
+                    new { EvalID = evaluatorId, CatIDs = catIds, GID = groupID });
 
                 var currentTemplate = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
                     SELECT TOP 1 TemplateID, TemplateGroupGuid, VersionNumber
                     FROM dbo.Templates
-                    WHERE EvaluatorID = @EvalID AND IsCurrentVersion = 1 AND IsDeleted = 0
-                    ORDER BY TemplateID DESC",
+                    WHERE EvaluatorID = @EvalID
+                    ORDER BY
+                        (SELECT COUNT(1) FROM dbo.EvaluationRecords er WHERE er.TemplateID = dbo.Templates.TemplateID) DESC,
+                        TemplateID ASC",
                     new { EvalID = evaluatorId });
 
                 int targetTemplateId;
@@ -824,6 +1016,18 @@ namespace SchoolEvaluationERP.Services
                 else
                 {
                     targetTemplateId = (int)currentTemplate.TemplateID;
+                    await conn.ExecuteAsync(@"
+                        UPDATE dbo.EvaluationRecords
+                        SET TemplateID = @TID
+                        WHERE EvaluatorID = @EvalID AND TemplateID <> @TID;
+
+                        UPDATE dbo.Templates
+                        SET IsCurrentVersion = 1, IsDeleted = 0, VersionNumber = 1
+                        WHERE TemplateID = @TID;
+
+                        DELETE FROM dbo.Templates
+                        WHERE EvaluatorID = @EvalID AND TemplateID <> @TID;",
+                        new { TID = targetTemplateId, EvalID = evaluatorId });
                 }
 
                 var existingSheet = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
@@ -889,20 +1093,32 @@ namespace SchoolEvaluationERP.Services
                         new { Title = criteriaTitle, CID = critId, SID = targetSheetId });
                 }
 
-                await conn.ExecuteAsync("DELETE FROM dbo.SheetEmployees WHERE SheetID = @SID", new { SID = targetSheetId });
+                await conn.ExecuteAsync(@"
+                    BEGIN TRANSACTION;
 
-                int rowOrd = 1;
-                foreach (int empId in activeEmpIds)
-                {
-                    await conn.ExecuteAsync(@"
-                        INSERT INTO dbo.SheetEmployees (SheetID, EmployeeID, RowOrder)
-                        VALUES (@SID, @EmpID, @RowOrd)",
-                        new { SID = targetSheetId, EmpID = empId, RowOrd = rowOrd++ });
-                }
+                    DELETE FROM dbo.SheetEmployees WITH (HOLDLOCK)
+                    WHERE SheetID = @SID;
+
+                    INSERT INTO dbo.SheetEmployees (SheetID, EmployeeID, RowOrder)
+                    SELECT @SID,
+                           e.EmployeeID,
+                           CAST(ROW_NUMBER() OVER (ORDER BY e.CategoryID ASC, b.BranchName ASC, e.EvaluationName ASC) AS INT)
+                    FROM dbo.Employees e
+                    INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
+                    WHERE e.IsActive = 1 AND e.IsContinuing = 1
+                      AND e.CategoryID IN @CatIDs
+                      AND NOT EXISTS (
+                          SELECT 1 FROM dbo.SystemTemplateExcludedEmployees see
+                          WHERE see.GroupID = @GID AND see.EmployeeID = e.EmployeeID
+                      );
+
+                    COMMIT TRANSACTION;",
+                    new { SID = targetSheetId, CatIDs = catIds, GID = groupID });
             }
             finally
             {
                 if (ownConn) conn.Dispose();
+                _systemTemplateSyncLock.Release();
             }
         }
     }

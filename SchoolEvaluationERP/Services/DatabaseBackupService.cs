@@ -30,6 +30,7 @@ namespace SchoolEvaluationERP.Services
         public List<Dictionary<string, object?>> UserPermissions { get; set; } = new();
         public List<Dictionary<string, object?>> Branches { get; set; } = new();
         public List<Dictionary<string, object?>> Categories { get; set; } = new();
+        public List<Dictionary<string, object?>> MonthlyCategoryIncentives { get; set; } = new();
         public List<Dictionary<string, object?>> Jobs { get; set; } = new();
         public List<Dictionary<string, object?>> JobTypes { get; set; } = new();
         public List<Dictionary<string, object?>> EvaluatorGroups { get; set; } = new();
@@ -44,6 +45,7 @@ namespace SchoolEvaluationERP.Services
         public List<Dictionary<string, object?>> EvaluationRecords { get; set; } = new();
         public List<Dictionary<string, object?>> EvaluationScores { get; set; } = new();
         public List<Dictionary<string, object?>> EvaluationEmployeeAdjustments { get; set; } = new();
+        public List<Dictionary<string, object?>> SystemTemplateExcludedEmployees { get; set; } = new();
     }
 
     public class DatabaseBackupService
@@ -295,6 +297,7 @@ namespace SchoolEvaluationERP.Services
                 UserPermissions = await QueryTableAsDictionariesAsync(conn, "SELECT PermissionID, UserID, ModuleCode, ModuleArabicName, CanRead, CanInsert, CanUpdate, CanDelete FROM dbo.UserPermissions"),
                 Branches = await QueryTableAsDictionariesAsync(conn, "SELECT BranchID, BranchName, IsActive FROM dbo.Branches"),
                 Categories = await QueryTableAsDictionariesAsync(conn, "SELECT CategoryID, DepartmentID, CategoryName, MaxIncentiveAmount, MinIncentiveAmount, IsActive FROM dbo.Categories"),
+                MonthlyCategoryIncentives = await QueryTableAsDictionariesAsync(conn, "SELECT MonthlyIncentiveID, EvalYear, EvalMonth, CategoryID, MaxIncentiveAmount, MinIncentiveAmount, UpdatedAt FROM dbo.MonthlyCategoryIncentives"),
                 Jobs = await QueryTableAsDictionariesAsync(conn, "SELECT JobID, CategoryID, JobTitle, IsActive FROM dbo.Jobs"),
                 JobTypes = await QueryTableAsDictionariesAsync(conn, "SELECT JobTypeID, JobID, JobTypeName, IsActive FROM dbo.JobTypes"),
                 EvaluatorGroups = await QueryTableAsDictionariesAsync(conn, "SELECT GroupID, GroupName, IsActive FROM dbo.EvaluatorGroups"),
@@ -307,8 +310,9 @@ namespace SchoolEvaluationERP.Services
                 SheetCriteria = await QueryTableAsDictionariesAsync(conn, "SELECT CriteriaID, SheetID, CriteriaTitle, MaxScore, ColumnOrder FROM dbo.SheetCriteria"),
                 SheetEmployees = await QueryTableAsDictionariesAsync(conn, "SELECT SheetEmployeeID, SheetID, EmployeeID, RowOrder FROM dbo.SheetEmployees"),
                 EvaluationRecords = await QueryTableAsDictionariesAsync(conn, "SELECT RecordID, TemplateID, EvaluatorID, EvalYear, EvalMonth, CreatedByUserID, CreatedAt, LastModifiedByUserID, LastModifiedAt, SnapshotEvaluatorName, SnapshotGroupName, SnapshotVersionNumber, SnapshotCreatedByFullName FROM dbo.EvaluationRecords"),
-                EvaluationScores = await QueryTableAsDictionariesAsync(conn, "SELECT ScoreID, RecordID, SheetID, EmployeeID, CriteriaID, GivenScore, SnapshotEvaluatorWeight, SnapshotEvaluationName, SnapshotSystemName, SnapshotBranchName, SnapshotCategoryName, SnapshotJobTitle, SnapshotJobTypeName, SnapshotHasIncentive, SnapshotSheetName, SnapshotTargetCategoryName, SnapshotSheetSortOrder, SnapshotCriteriaTitle, SnapshotCriteriaMaxScore, SnapshotCriteriaOrder FROM dbo.EvaluationScores"),
-                EvaluationEmployeeAdjustments = await QueryTableAsDictionariesAsync(conn, "SELECT AdjustmentID, RecordID, SheetID, EmployeeID, BalancingDelta FROM dbo.EvaluationEmployeeAdjustments")
+                EvaluationScores = await QueryTableAsDictionariesAsync(conn, "SELECT ScoreID, RecordID, SheetID, EmployeeID, CriteriaID, GivenScore, SnapshotEvaluatorWeight, SnapshotEvaluationName, SnapshotSystemName, SnapshotBranchName, SnapshotCategoryName, SnapshotJobTitle, SnapshotJobTypeName, SnapshotHasIncentive, SnapshotSheetName, SnapshotTargetCategoryName, SnapshotSheetSortOrder, SnapshotCriteriaTitle, SnapshotCriteriaMaxScore, SnapshotCriteriaOrder, RawEnteredCount FROM dbo.EvaluationScores"),
+                EvaluationEmployeeAdjustments = await QueryTableAsDictionariesAsync(conn, "SELECT AdjustmentID, RecordID, SheetID, EmployeeID, BalancingDelta FROM dbo.EvaluationEmployeeAdjustments"),
+                SystemTemplateExcludedEmployees = await QueryTableAsDictionariesAsync(conn, "SELECT ExcludedID, GroupID, EmployeeID FROM dbo.SystemTemplateExcludedEmployees")
             };
 
             string json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
@@ -330,6 +334,7 @@ namespace SchoolEvaluationERP.Services
             try
             {
                 await conn.ExecuteAsync(@"
+                    DELETE FROM dbo.SystemTemplateExcludedEmployees;
                     DELETE FROM dbo.EvaluationEmployeeAdjustments;
                     DELETE FROM dbo.EvaluationScores;
                     DELETE FROM dbo.EvaluationRecords;
@@ -344,6 +349,7 @@ namespace SchoolEvaluationERP.Services
                     DELETE FROM dbo.EvaluatorGroups;
                     DELETE FROM dbo.JobTypes;
                     DELETE FROM dbo.Jobs;
+                    DELETE FROM dbo.MonthlyCategoryIncentives;
                     DELETE FROM dbo.Categories;
                     DELETE FROM dbo.Branches;
                     DELETE FROM dbo.UserPermissions;
@@ -353,6 +359,7 @@ namespace SchoolEvaluationERP.Services
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.UserPermissions", snapshot.UserPermissions);
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.Branches", snapshot.Branches);
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.Categories", snapshot.Categories);
+                await BulkInsertWithIdentityAsync(conn, tx, "dbo.MonthlyCategoryIncentives", snapshot.MonthlyCategoryIncentives);
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.Jobs", snapshot.Jobs);
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.JobTypes", snapshot.JobTypes);
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.EvaluatorGroups", snapshot.EvaluatorGroups);
@@ -367,6 +374,7 @@ namespace SchoolEvaluationERP.Services
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.EvaluationRecords", snapshot.EvaluationRecords);
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.EvaluationScores", snapshot.EvaluationScores);
                 await BulkInsertWithIdentityAsync(conn, tx, "dbo.EvaluationEmployeeAdjustments", snapshot.EvaluationEmployeeAdjustments);
+                await BulkInsertWithIdentityAsync(conn, tx, "dbo.SystemTemplateExcludedEmployees", snapshot.SystemTemplateExcludedEmployees);
 
                 await tx.CommitAsync();
             }

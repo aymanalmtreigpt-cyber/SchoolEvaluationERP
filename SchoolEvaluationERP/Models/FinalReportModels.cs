@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -40,7 +40,7 @@ namespace SchoolEvaluationERP.Models
         public string HasIncentiveDisplay => HasIncentive ? "بحافز ✔" : "بدون حافز (أداء فقط)";
         public string CompletionStatusDisplay => IsAllEvaluatorsCompleted ? "مكتمل ✔" : "غير مكتمل ⚠";
         public string MonthlyAverageDisplay => $"{MonthlyEvaluationAverage:0.##}%";
-        public string IncentivePercentDisplay => HasIncentive ? $"{DisplayedIncentivePercent}%" : "بدون حافز";
+        public string IncentivePercentDisplay => HasIncentive ? $"{ExactIncentivePercent:0.##}%" : "بدون حافز";
         public string FinalAmountDisplay => $"{FinalIncentiveAmount:N0}";
     }
 
@@ -61,3 +61,4 @@ namespace SchoolEvaluationERP.Models
         public decimal OverallAverageScore => Rows.Count == 0 ? 0m : Math.Round(Rows.Average(r => r.MonthlyEvaluationAverage), 2, MidpointRounding.AwayFromZero);
     }
 }
+

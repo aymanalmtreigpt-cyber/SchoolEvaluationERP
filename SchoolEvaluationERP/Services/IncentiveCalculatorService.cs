@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 
 namespace SchoolEvaluationERP.Services
 {
@@ -45,7 +45,7 @@ namespace SchoolEvaluationERP.Services
             };
 
             // 1. التحقق من شرط الاستحقاق الأساسي (> 80)
-            if (cleanEvalScore <= 80m)
+            if (cleanEvalScore < 81m)
             {
                 result.ExactIncentivePercent = 0m;
                 result.DisplayedIncentivePercent = 0;
@@ -89,9 +89,16 @@ namespace SchoolEvaluationERP.Services
             result.FinalAmount = roundedAmount;
 
             // 6. توليد نص البيان المطابق للصورة تماماً
-            string arabicMonthName = GetArabicMonthName(month);
-            string formattedEvalScore = result.EvaluationAveragePercent.ToString("0.##");
-            result.StatementText = $"لكم حافز شهر {arabicMonthName}/{year} م معدل التقييم=( {formattedEvalScore}% )-نسبة الحافز المستحقة=( {result.DisplayedIncentivePercent}% )";
+            if (roundedAmount <= 0m)
+            {
+                result.StatementText = string.Empty;
+            }
+            else
+            {
+                string arabicMonthName = GetArabicMonthName(month);
+                string formattedEvalScore = result.EvaluationAveragePercent.ToString("0.##");
+                result.StatementText = $"لكم حافز شهر {arabicMonthName}/{year} م معدل التقييم=( {formattedEvalScore}% )-نسبة الحافز المستحقة=( {result.DisplayedIncentivePercent}% )";
+            }
 
             return result;
         }
@@ -120,3 +127,6 @@ namespace SchoolEvaluationERP.Services
         };
     }
 }
+
+
+

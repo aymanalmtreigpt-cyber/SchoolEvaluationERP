@@ -20,8 +20,8 @@ namespace SchoolEvaluationERP.Models
 
     public class CategoryIncentiveSettingRow : INotifyPropertyChanged
     {
-        private decimal _maxIncentiveAmount = 7000m;
-        private decimal _minIncentiveAmount = 1500m;
+        private decimal _maxIncentiveAmount = 0m;
+        private decimal _minIncentiveAmount = 0m;
         private int _deservingEmployeesCount;
         private decimal _categoryTotalIncentiveAmount;
         private decimal _categoryAverageScore;

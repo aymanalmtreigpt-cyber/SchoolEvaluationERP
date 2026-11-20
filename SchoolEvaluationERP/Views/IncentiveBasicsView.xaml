@@ -87,7 +87,7 @@
 
                     <Border Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="8" Padding="12,6" Margin="0,0,8,6" MinWidth="175">
                         <StackPanel>
-                            <TextBlock Text="إجمالي المستحقين للشهر (> 80%)" FontSize="11.5" Foreground="#047857"/>
+                            <TextBlock Text="إجمالي المستحقين للشهر (≥ 81%)" FontSize="11.5" Foreground="#047857"/>
                             <TextBlock x:Name="TxtKpiDeservingEmployees" Text="0 مستحق" FontSize="16" FontWeight="Bold" Foreground="#047857" Margin="0,2,0,0"/>
                         </StackPanel>
                     </Border>
@@ -112,7 +112,7 @@
                         <DataGridTextColumn Header="الموظفون المستمرون" Binding="{Binding TotalContinuingEmployeesCount}" IsReadOnly="True" Width="110" MinWidth="100"/>
                         <DataGridTextColumn Header="المشمولون بالحافز" Binding="{Binding IncentiveEligibleEmployeesCount}" IsReadOnly="True" Width="110" MinWidth="100"/>
                         <DataGridTextColumn Header="متوسط تقييم الفئة بالشهر" Binding="{Binding CategoryAverageDisplay}" IsReadOnly="True" Width="130" MinWidth="115"/>
-                        <DataGridTextColumn Header="عدد المستحقين (> 80%)" Binding="{Binding DeservingEmployeesCount}" IsReadOnly="True" Width="125" MinWidth="115"/>
+                        <DataGridTextColumn Header="عدد المستحقين (≥ 81%)" Binding="{Binding DeservingEmployeesCount}" IsReadOnly="True" Width="125" MinWidth="115"/>
 
                         <DataGridTemplateColumn Header="الحد الأعلى للحافز (100%)" Width="160" MinWidth="145">
                             <DataGridTemplateColumn.CellTemplate>
@@ -125,7 +125,7 @@
                             </DataGridTemplateColumn.CellTemplate>
                         </DataGridTemplateColumn>
 
-                        <DataGridTemplateColumn Header="الحد الأدنى للحافز (> 80%)" Width="160" MinWidth="145">
+                        <DataGridTemplateColumn Header="الحد الأدنى للحافز (≥ 81%)" Width="160" MinWidth="145">
                             <DataGridTemplateColumn.CellTemplate>
                                 <DataTemplate>
                                     <TextBox Text="{Binding MinIncentiveText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -153,3 +153,4 @@
         </Border>
     </Grid>
 </UserControl>
+

@@ -657,6 +657,19 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
+            if (selected.IsSystemGroup || selected.SystemGroupCode == "ABSENCE" || selected.SystemGroupCode == "DELAY")
+            {
+                var sysDlg = new SystemEvaluatorGroupDialog(selected)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                if (sysDlg.ShowDialog() == true)
+                {
+                    await RefreshAllMasterDataAsync();
+                }
+                return;
+            }
+
             var dlg = new EvaluatorGroupDialog(selected)
             {
                 Owner = Window.GetWindow(this)
@@ -973,4 +986,5 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
 

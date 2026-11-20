@@ -697,9 +697,54 @@ namespace SchoolEvaluationERP.Services
             return (true, "تم حفظ إعدادات الحد المسموح به وتحديث القالب التلقائي بنجاح.");
         }
 
+        private static async Task EnsureSystemGroupsActiveInDbAsync(SqlConnection conn)
+        {
+            await conn.ExecuteAsync(@"
+                DECLARE @AbsGID INT = (SELECT TOP 1 GroupID FROM dbo.EvaluatorGroups WHERE SystemGroupCode = 'ABSENCE' OR GroupName IN (N'الغياب', N'غياب') ORDER BY GroupID ASC);
+                IF @AbsGID IS NULL
+                BEGIN
+                    INSERT INTO dbo.EvaluatorGroups (GroupName, IsActive, IsSystemGroup, SystemGroupCode, MaxAllowedCount) VALUES (N'الغياب', 1, 1, 'ABSENCE', 3);
+                    SET @AbsGID = SCOPE_IDENTITY();
+                END
+                ELSE
+                BEGIN
+                    UPDATE dbo.EvaluatorGroups SET GroupName = N'الغياب', IsActive = 1, IsSystemGroup = 1, SystemGroupCode = 'ABSENCE', MaxAllowedCount = CASE WHEN ISNULL(MaxAllowedCount, -1) < 0 THEN 0 ELSE MaxAllowedCount END WHERE GroupID = @AbsGID;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM dbo.Evaluators WHERE GroupID = @AbsGID)
+                    INSERT INTO dbo.Evaluators (GroupID, EvaluatorName, IsActive) VALUES (@AbsGID, N'الغياب', 1);
+                ELSE
+                BEGIN
+                    DECLARE @AbsEvID INT = (SELECT TOP 1 EvaluatorID FROM dbo.Evaluators WHERE GroupID = @AbsGID ORDER BY IsActive DESC, EvaluatorID ASC);
+                    UPDATE dbo.Evaluators SET EvaluatorName = N'الغياب', IsActive = 1 WHERE EvaluatorID = @AbsEvID;
+                END
+
+                DECLARE @DelGID INT = (SELECT TOP 1 GroupID FROM dbo.EvaluatorGroups WHERE SystemGroupCode = 'DELAY' OR GroupName IN (N'التأخير', N'التاخير', N'تأخير', N'تاخير') ORDER BY GroupID ASC);
+                IF @DelGID IS NULL
+                BEGIN
+                    INSERT INTO dbo.EvaluatorGroups (GroupName, IsActive, IsSystemGroup, SystemGroupCode, MaxAllowedCount) VALUES (N'التأخير', 1, 1, 'DELAY', 3);
+                    SET @DelGID = SCOPE_IDENTITY();
+                END
+                ELSE
+                BEGIN
+                    UPDATE dbo.EvaluatorGroups SET GroupName = N'التأخير', IsActive = 1, IsSystemGroup = 1, SystemGroupCode = 'DELAY', MaxAllowedCount = CASE WHEN ISNULL(MaxAllowedCount, -1) < 0 THEN 0 ELSE MaxAllowedCount END WHERE GroupID = @DelGID;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM dbo.Evaluators WHERE GroupID = @DelGID)
+                    INSERT INTO dbo.Evaluators (GroupID, EvaluatorName, IsActive) VALUES (@DelGID, N'التأخير', 1);
+                ELSE
+                BEGIN
+                    DECLARE @DelEvID INT = (SELECT TOP 1 EvaluatorID FROM dbo.Evaluators WHERE GroupID = @DelGID ORDER BY IsActive DESC, EvaluatorID ASC);
+                    UPDATE dbo.Evaluators SET EvaluatorName = N'التأخير', IsActive = 1 WHERE EvaluatorID = @DelEvID;
+                END
+            ");
+        }
+
         public async Task<List<EvaluatorGroupDto>> GetEvaluatorGroupsAsync()
         {
             using var conn = await OpenReadyConnectionAsync();
+            await EnsureSystemGroupsActiveInDbAsync(conn);
+
             var groups = (await conn.QueryAsync<EvaluatorGroupDto>(@"
                 SELECT eg.GroupID, eg.GroupName, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup,
                        ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode, ISNULL(eg.MaxAllowedCount, 3) AS MaxAllowedCount,
@@ -717,7 +762,11 @@ namespace SchoolEvaluationERP.Services
                 {
                     grp.Members = mems;
                     grp.MembersCount = mems.Count;
-                    grp.MembersSummary = string.Join(" ، ", mems.Select(m => m.EvaluatorName));
+                    grp.MembersSummary = grp.IsSystemGroup
+                        ? (grp.SystemGroupCode == "ABSENCE"
+                            ? $"قالب غياب تلقائي موحد (الحد المسموح: {grp.MaxAllowedCount} أيام — ما زاد درجته 0)"
+                            : $"قالب تأخير تلقائي موحد (الحد المسموح: {grp.MaxAllowedCount} مرات — ما زاد درجته 0)")
+                        : string.Join(" ، ", mems.Select(m => m.EvaluatorName));
                 }
                 else
                 {
@@ -867,6 +916,11 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            int isSysGrp = await conn.ExecuteScalarAsync<int>(
+                "SELECT ISNULL(IsSystemGroup, 0) FROM dbo.EvaluatorGroups WHERE GroupID = @GID",
+                new { GID = groupId });
+            if (isSysGrp == 1)
+                return (false, "لا يمكن حذف مجموعة (الغياب / التأخير) لأنها مجموعة نظام افتراضية ثابتة.");
             await PurgeOrphanedArchivedDataAsync(conn);
 
             int activeTemplates = await conn.ExecuteScalarAsync<int>(@"
@@ -2534,6 +2588,8 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
 
 
 

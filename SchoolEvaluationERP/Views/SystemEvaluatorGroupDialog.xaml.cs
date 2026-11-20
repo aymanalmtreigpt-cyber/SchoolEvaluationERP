@@ -27,10 +27,10 @@ namespace SchoolEvaluationERP.Views
             TxtGroupNameReadOnly.Text = _group.GroupName;
 
             LblMaxAllowedCount.Text = isAbsence
-                ? "عدد أيام الغياب المسموح بها في الشهر (إذا غاب الموظف أكثر من هذا الحد تصبح درجته صفراً):"
-                : "عدد مرات التأخير المسموح بها في الشهر (إذا تأخر الموظف أكثر من هذا الحد تصبح درجته صفراً):";
+                ? "عدد أيام الغياب المسموح بها في الشهر (يمكنك إدخال 0 إذا كان غياب يوم واحد يجعل الدرجة صفراً):"
+                : "عدد مرات التأخير المسموح بها في الشهر (يمكنك إدخال 0 إذا كان تأخير مرة واحدة يجعل الدرجة صفراً):";
 
-            TxtMaxAllowedCount.Text = (_group.MaxAllowedCount > 0 ? _group.MaxAllowedCount : 3).ToString(CultureInfo.InvariantCulture);
+            TxtMaxAllowedCount.Text = (_group.MaxAllowedCount >= 0 ? _group.MaxAllowedCount : 0).ToString(CultureInfo.InvariantCulture);
             UpdateLiveFormulaPreview();
 
             Loaded += (_, _) =>
@@ -50,13 +50,20 @@ namespace SchoolEvaluationERP.Views
             if (TxtFormulaPreview == null) return;
 
             string raw = WeeklyScoreRowViewModel.NormalizeAsciiDigits(TxtMaxAllowedCount.Text.Trim());
-            if (!int.TryParse(raw, out int maxAllowed) || maxAllowed <= 0)
+            if (!int.TryParse(raw, out int maxAllowed) || maxAllowed < 0)
             {
-                TxtFormulaPreview.Text = "يرجى إدخال عدد صحيح أكبر من صفر (مثلاً: 3).";
+                TxtFormulaPreview.Text = "يرجى إدخال عدد صحيح (0 أو أكثر).";
                 return;
             }
 
             string unit = (_group.SystemGroupCode == "ABSENCE" || _group.GroupName.Contains("غياب")) ? "يوم" : "مرة";
+
+            if (maxAllowed == 0)
+            {
+                TxtFormulaPreview.Text = $"• 0 {unit} = 100%   |   • 1 {unit} فأكثر = 0% (صفر — بدون فترة سماح)";
+                return;
+            }
+
             var parts = new List<string> { $"• 0 {unit} = 100%" };
 
             int previewLimit = Math.Min(maxAllowed, 6);
@@ -78,9 +85,9 @@ namespace SchoolEvaluationERP.Views
         private async void BtnSaveSettings_Click(object sender, RoutedEventArgs e)
         {
             string raw = WeeklyScoreRowViewModel.NormalizeAsciiDigits(TxtMaxAllowedCount.Text.Trim());
-            if (!int.TryParse(raw, out int maxAllowed) || maxAllowed <= 0 || maxAllowed > 60)
+            if (!int.TryParse(raw, out int maxAllowed) || maxAllowed < 0 || maxAllowed > 60)
             {
-                MessageBox.Show("يرجى إدخال عدد صحيح للحد المسموح به (بين 1 و 60).", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("يرجى إدخال عدد صحيح للحد المسموح به (من 0 إلى 60).", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
                 TxtMaxAllowedCount.Focus();
                 TxtMaxAllowedCount.SelectAll();
                 return;

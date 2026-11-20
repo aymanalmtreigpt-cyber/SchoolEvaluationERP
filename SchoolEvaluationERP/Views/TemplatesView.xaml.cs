@@ -21,6 +21,7 @@ namespace SchoolEvaluationERP.Views
         private List<SheetEmployeeRowModel> _availableCategoryEmployees = new();
 
         private bool _isReadOnlyViewMode = true;
+        private int _searchRequestVersion;
 
         private bool CanInsert => AuthService.CurrentSession?.HasPermission("Templates", "insert") == true;
         private bool CanUpdate => AuthService.CurrentSession?.HasPermission("Templates", "update") == true;
@@ -44,28 +45,41 @@ namespace SchoolEvaluationERP.Views
             BtnDeleteSelectedTemplate.Visibility = CanDelete ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        private async Task RefreshSavedTemplatesGridAsync()
+        private async Task RefreshSavedTemplatesGridAsync(bool syncSystemTemplates = true)
         {
             if (!IsLoaded) return;
+            int requestVersion = ++_searchRequestVersion;
             string search = TxtSearchTemplateEvaluator.Text.Trim();
-            var list = await _service.GetCurrentTemplatesAsync(search);
+            var list = await _service.GetCurrentTemplatesAsync(search, syncSystemTemplates);
+            if (requestVersion != _searchRequestVersion)
+                return;
+
             GridSavedTemplates.ItemsSource = list;
             TxtTemplatesCountBadge.Text = $"إجمالي القوالب الفعالة: {list.Count}";
         }
 
         private async void TxtSearchTemplateEvaluator_TextChanged(object sender, TextChangedEventArgs e)
         {
-            await RefreshSavedTemplatesGridAsync();
+            await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
         }
 
         private async void BtnResetTemplateSearch_Click(object sender, RoutedEventArgs e)
         {
-            TxtSearchTemplateEvaluator.Text = string.Empty;
-            await RefreshSavedTemplatesGridAsync();
+            if (!string.IsNullOrEmpty(TxtSearchTemplateEvaluator.Text))
+            {
+                TxtSearchTemplateEvaluator.Text = string.Empty;
+            }
+            else
+            {
+                await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
+            }
         }
 
         private async void GridSavedTemplates_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
+            if (MainTemplatesTabControl.SelectedItem == TabTemplateDesigner && !_isReadOnlyViewMode)
+                return;
+
             if (GridSavedTemplates.SelectedItem is TemplateSummaryDto selected)
             {
                 await LoadTemplateIntoDesignerAsync(selected.TemplateID, openInReadOnlyMode: true, switchToDesignerTab: false);
@@ -697,7 +711,21 @@ namespace SchoolEvaluationERP.Views
             GridSheetPreview.ItemsSource = _activeSheet.EmployeeRows;
         }
 
-        private void BtnAddSelectedEmployeeToSheet_Click(object sender, RoutedEventArgs e)
+        private async Task SaveSystemTemplateChangesImmediatelyAsync()
+        {
+            if (_currentTemplate != null && _currentTemplate.IsSystemTemplate && _currentTemplate.TemplateID > 0)
+            {
+                var (isSuccess, _, savedId) = await _service.SaveTemplateAsync(_currentTemplate);
+                if (isSuccess && savedId > 0)
+                {
+                    _currentTemplate.TemplateID = savedId;
+                    _currentTemplate.VersionNumber = 1;
+                    await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
+                }
+            }
+        }
+
+        private async void BtnAddSelectedEmployeeToSheet_Click(object sender, RoutedEventArgs e)
         {
             if (_activeSheet == null || _isReadOnlyViewMode) return;
 
@@ -729,12 +757,14 @@ namespace SchoolEvaluationERP.Views
             empToAdd.RowOrder = _activeSheet.EmployeeRows.Count + 1;
             _activeSheet.EmployeeRows.Add(empToAdd);
 
+            await SaveSystemTemplateChangesImmediatelyAsync();
+
             RefreshAvailableEmployeesCombo();
             RebuildPreviewDataGrid(true);
             RebuildBottomSheetTabsBar();
         }
 
-        private void BtnAddAllCategoryEmployees_Click(object sender, RoutedEventArgs e)
+        private async void BtnAddAllCategoryEmployees_Click(object sender, RoutedEventArgs e)
         {
             if (_activeSheet == null || _isReadOnlyViewMode) return;
 
@@ -756,12 +786,14 @@ namespace SchoolEvaluationERP.Views
                 _activeSheet.EmployeeRows.Add(emp);
             }
 
+            await SaveSystemTemplateChangesImmediatelyAsync();
+
             RefreshAvailableEmployeesCombo();
             RebuildPreviewDataGrid(true);
             RebuildBottomSheetTabsBar();
         }
 
-        private void BtnRemoveEmployeeFromSheet_Click(object sender, RoutedEventArgs e)
+        private async void BtnRemoveEmployeeFromSheet_Click(object sender, RoutedEventArgs e)
         {
             if (_activeSheet == null || _isReadOnlyViewMode) return;
 
@@ -778,6 +810,8 @@ namespace SchoolEvaluationERP.Views
             }
 
             _activeSheet.ReindexOrders();
+
+            await SaveSystemTemplateChangesImmediatelyAsync();
 
             RefreshAvailableEmployeesCombo();
             RebuildPreviewDataGrid(true);
@@ -1050,6 +1084,7 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
 
 
 

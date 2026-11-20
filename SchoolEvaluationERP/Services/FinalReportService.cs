@@ -93,7 +93,11 @@ namespace SchoolEvaluationERP.Services
                 .GroupBy(x => (int)x.CategoryID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            var categoryIncentiveMap = (await conn.QueryAsync<dynamic>("SELECT CategoryID, MaxIncentiveAmount, MinIncentiveAmount FROM dbo.Categories"))
+            var categoryIncentiveMap = (await conn.QueryAsync<dynamic>(@"
+                SELECT CategoryID, MaxIncentiveAmount, MinIncentiveAmount
+                FROM dbo.MonthlyCategoryIncentives
+                WHERE EvalYear = @Year AND EvalMonth = @Month",
+                new { Year = year, Month = month }))
                 .ToDictionary(k => (int)k.CategoryID, v => (MaxAmt: (decimal)v.MaxIncentiveAmount, MinAmt: (decimal)v.MinIncentiveAmount));
 
             var empAssignedEvals = (await conn.QueryAsync<dynamic>(@"
@@ -275,8 +279,8 @@ namespace SchoolEvaluationERP.Services
                 }
                 else
                 {
-                    decimal catMaxAmt = categoryIncentiveMap.TryGetValue(emp.CategoryID, out var lim) ? lim.MaxAmt : maxIncentiveAmount;
-                    decimal catMinAmt = categoryIncentiveMap.TryGetValue(emp.CategoryID, out var lim2) ? lim2.MinAmt : minIncentiveAmount;
+                    decimal catMaxAmt = categoryIncentiveMap.TryGetValue(emp.CategoryID, out var lim) ? lim.MaxAmt : 0m;
+                    decimal catMinAmt = categoryIncentiveMap.TryGetValue(emp.CategoryID, out var lim2) ? lim2.MinAmt : 0m;
 
                     var calc = IncentiveCalculatorService.CalculateMonthlyIncentive(
                         emp.SystemName,

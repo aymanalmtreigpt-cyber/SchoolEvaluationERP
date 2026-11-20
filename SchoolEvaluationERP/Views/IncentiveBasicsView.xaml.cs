@@ -59,8 +59,8 @@ namespace SchoolEvaluationERP.Views
             CmbMonth.SelectedValue = DateTime.Now.Month;
 
             ChkRoundTo50.IsChecked = AppConfigService.RoundToNearest50;
-            TxtQuickMax.Text = AppConfigService.DefaultMaxIncentiveAmount.ToString("0.##", CultureInfo.InvariantCulture);
-            TxtQuickMin.Text = AppConfigService.DefaultMinIncentiveAmount.ToString("0.##", CultureInfo.InvariantCulture);
+            TxtQuickMax.Text = "0";
+            TxtQuickMin.Text = "0";
 
             _isInitializing = false;
         }
@@ -77,6 +77,17 @@ namespace SchoolEvaluationERP.Views
             foreach (var r in _rows)
             {
                 r.OnRowAmountsChanged = UpdateLiveGrandTotalsKpi;
+            }
+
+            if (_rows.Count > 0)
+            {
+                TxtQuickMax.Text = _rows[0].MaxIncentiveText;
+                TxtQuickMin.Text = _rows[0].MinIncentiveText;
+            }
+            else
+            {
+                TxtQuickMax.Text = "0";
+                TxtQuickMin.Text = "0";
             }
 
             GridCategoryIncentives.ItemsSource = _rows;
@@ -201,8 +212,14 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
+            if (CmbYear.SelectedItem is not int year || CmbMonth.SelectedValue is not int month)
+            {
+                MessageBox.Show("يرجى اختيار السنة والشهر أولاً.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             BtnSaveCategoryIncentives.IsEnabled = false;
-            var (isSuccess, message) = await _service.SaveCategoriesIncentiveSettingsAsync(_rows);
+            var (isSuccess, message) = await _service.SaveCategoriesIncentiveSettingsAsync(year, month, _rows);
             BtnSaveCategoryIncentives.IsEnabled = true;
 
             MessageBox.Show(

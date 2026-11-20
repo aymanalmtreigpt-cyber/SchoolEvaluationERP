@@ -229,9 +229,24 @@ namespace SchoolEvaluationERP.Services
                         CategoryID INT IDENTITY(1,1) PRIMARY KEY,
                         DepartmentID INT NULL,
                         CategoryName NVARCHAR(150) NOT NULL UNIQUE,
-                        MaxIncentiveAmount DECIMAL(10,2) NOT NULL CONSTRAINT DF_Categories_MaxInc DEFAULT (7000),
-                        MinIncentiveAmount DECIMAL(10,2) NOT NULL CONSTRAINT DF_Categories_MinInc DEFAULT (1500),
+                        MaxIncentiveAmount DECIMAL(10,2) NOT NULL CONSTRAINT DF_Categories_MaxInc DEFAULT (0),
+                        MinIncentiveAmount DECIMAL(10,2) NOT NULL CONSTRAINT DF_Categories_MinInc DEFAULT (0),
                         IsActive BIT NOT NULL DEFAULT 1
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyCategoryIncentives', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyCategoryIncentives (
+                        MonthlyIncentiveID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        CategoryID INT NOT NULL,
+                        MaxIncentiveAmount DECIMAL(10,2) NOT NULL DEFAULT 0,
+                        MinIncentiveAmount DECIMAL(10,2) NOT NULL DEFAULT 0,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT FK_MonthlyCatInc_Categories FOREIGN KEY (CategoryID) REFERENCES dbo.Categories(CategoryID) ON DELETE CASCADE,
+                        CONSTRAINT UQ_MonthlyCatInc_Year_Month_Cat UNIQUE (EvalYear, EvalMonth, CategoryID)
                     );
                 END
 
@@ -550,6 +565,21 @@ namespace SchoolEvaluationERP.Services
                     );
                 END
 
+                IF OBJECT_ID('dbo.MonthlyCategoryIncentives', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyCategoryIncentives (
+                        MonthlyIncentiveID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        CategoryID INT NOT NULL,
+                        MaxIncentiveAmount DECIMAL(10,2) NOT NULL DEFAULT 0,
+                        MinIncentiveAmount DECIMAL(10,2) NOT NULL DEFAULT 0,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT FK_MonthlyCatInc_Categories FOREIGN KEY (CategoryID) REFERENCES dbo.Categories(CategoryID) ON DELETE CASCADE,
+                        CONSTRAINT UQ_MonthlyCatInc_Year_Month_Cat UNIQUE (EvalYear, EvalMonth, CategoryID)
+                    );
+                END
+
                 IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Records_Templates')
                     ALTER TABLE dbo.EvaluationRecords DROP CONSTRAINT FK_Records_Templates;
                 IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Records_Evaluators')
@@ -594,18 +624,18 @@ namespace SchoolEvaluationERP.Services
                 BEGIN
                     UPDATE dbo.EvaluatorGroups
                     SET GroupName = N'الغياب', IsActive = 1, IsSystemGroup = 1, SystemGroupCode = 'ABSENCE',
-                        MaxAllowedCount = CASE WHEN MaxAllowedCount <= 0 THEN 3 ELSE MaxAllowedCount END
+                        MaxAllowedCount = CASE WHEN MaxAllowedCount < 0 THEN 0 ELSE MaxAllowedCount END
                     WHERE GroupID = @AbsGroupID;
                 END
 
-                IF NOT EXISTS (SELECT 1 FROM dbo.Evaluators WHERE GroupID = @AbsGroupID AND IsActive = 1)
+                IF NOT EXISTS (SELECT 1 FROM dbo.Evaluators WHERE GroupID = @AbsGroupID)
                 BEGIN
                     INSERT INTO dbo.Evaluators (GroupID, EvaluatorName, IsActive)
                     VALUES (@AbsGroupID, N'الغياب', 1);
                 END
                 ELSE
                 BEGIN
-                    DECLARE @PrimaryAbsEvalID INT = (SELECT TOP 1 EvaluatorID FROM dbo.Evaluators WHERE GroupID = @AbsGroupID AND IsActive = 1 ORDER BY EvaluatorID ASC);
+                    DECLARE @PrimaryAbsEvalID INT = (SELECT TOP 1 EvaluatorID FROM dbo.Evaluators WHERE GroupID = @AbsGroupID ORDER BY IsActive DESC, EvaluatorID ASC);
                     UPDATE dbo.Evaluators SET EvaluatorName = N'الغياب', IsActive = 1 WHERE EvaluatorID = @PrimaryAbsEvalID;
                     UPDATE dbo.Evaluators SET IsActive = 0 WHERE GroupID = @AbsGroupID AND EvaluatorID <> @PrimaryAbsEvalID;
                 END
@@ -627,18 +657,18 @@ namespace SchoolEvaluationERP.Services
                 BEGIN
                     UPDATE dbo.EvaluatorGroups
                     SET GroupName = N'التأخير', IsActive = 1, IsSystemGroup = 1, SystemGroupCode = 'DELAY',
-                        MaxAllowedCount = CASE WHEN MaxAllowedCount <= 0 THEN 3 ELSE MaxAllowedCount END
+                        MaxAllowedCount = CASE WHEN MaxAllowedCount < 0 THEN 0 ELSE MaxAllowedCount END
                     WHERE GroupID = @DelGroupID;
                 END
 
-                IF NOT EXISTS (SELECT 1 FROM dbo.Evaluators WHERE GroupID = @DelGroupID AND IsActive = 1)
+                IF NOT EXISTS (SELECT 1 FROM dbo.Evaluators WHERE GroupID = @DelGroupID)
                 BEGIN
                     INSERT INTO dbo.Evaluators (GroupID, EvaluatorName, IsActive)
                     VALUES (@DelGroupID, N'التأخير', 1);
                 END
                 ELSE
                 BEGIN
-                    DECLARE @PrimaryDelEvalID INT = (SELECT TOP 1 EvaluatorID FROM dbo.Evaluators WHERE GroupID = @DelGroupID AND IsActive = 1 ORDER BY EvaluatorID ASC);
+                    DECLARE @PrimaryDelEvalID INT = (SELECT TOP 1 EvaluatorID FROM dbo.Evaluators WHERE GroupID = @DelGroupID ORDER BY IsActive DESC, EvaluatorID ASC);
                     UPDATE dbo.Evaluators SET EvaluatorName = N'التأخير', IsActive = 1 WHERE EvaluatorID = @PrimaryDelEvalID;
                     UPDATE dbo.Evaluators SET IsActive = 0 WHERE GroupID = @DelGroupID AND EvaluatorID <> @PrimaryDelEvalID;
                 END
@@ -665,3 +695,5 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+

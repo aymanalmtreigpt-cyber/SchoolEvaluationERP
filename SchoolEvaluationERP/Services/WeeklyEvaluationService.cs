@@ -59,6 +59,9 @@ namespace SchoolEvaluationERP.Services
         public async Task<List<TemplateSummaryDto>> GetActiveTemplatesForEntryAsync(string search = "")
         {
             using var conn = await OpenReadyConnectionAsync();
+            var templateSvc = new TemplateService(_connectionString);
+            await templateSvc.SyncAllSystemGroupTemplatesAsync(conn);
+
             string sql = @"
                 SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, ISNULL(eg.GroupName, N'') AS GroupName,
                        t.VersionNumber, t.CreatedAt,
@@ -73,7 +76,7 @@ namespace SchoolEvaluationERP.Services
                 LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
                 WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0 AND ev.IsActive = 1
                   AND (@Search = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
-                ORDER BY ev.EvaluatorName ASC, t.TemplateID DESC";
+                ORDER BY ISNULL(eg.IsSystemGroup, 0) DESC, ev.EvaluatorName ASC, t.TemplateID DESC";
 
             var list = (await conn.QueryAsync<TemplateSummaryDto>(sql, new
             {
@@ -133,7 +136,9 @@ namespace SchoolEvaluationERP.Services
             using var conn = await OpenReadyConnectionAsync();
             var header = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
                 SELECT t.TemplateID, t.VersionNumber, t.EvaluatorID, ev.EvaluatorName, ISNULL(eg.GroupName, N'') AS GroupName,
-                       ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup, ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode, ISNULL(eg.MaxAllowedCount, 3) AS MaxAllowedCount
+                       ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup,
+                       ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode,
+                       ISNULL(eg.MaxAllowedCount, 3) AS MaxAllowedCount
                 FROM dbo.Templates t
                 INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
                 LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
@@ -141,9 +146,10 @@ namespace SchoolEvaluationERP.Services
 
             if (header == null) return null;
 
-            bool isCountBased = ((int)header.IsSystemGroup) == 1;
-            string sysCode = header.SystemGroupCode ?? string.Empty;
-            int maxAllowed = (int)header.MaxAllowedCount;
+            bool isCountBased = Convert.ToBoolean(header.IsSystemGroup);
+            string sysCode = (header.SystemGroupCode as string) ?? string.Empty;
+            int maxAllowed = Convert.ToInt32(header.MaxAllowedCount);
+            if (maxAllowed < 0) maxAllowed = 0;
 
             var workspace = new WeeklyEvaluationWorkspaceModel
             {
@@ -158,7 +164,7 @@ namespace SchoolEvaluationERP.Services
                 CanBeModified = true,
                 IsCountBasedEvaluation = isCountBased,
                 SystemGroupCode = sysCode,
-                MaxAllowedCount = maxAllowed > 0 ? maxAllowed : 3
+                MaxAllowedCount = maxAllowed
             };
 
             var sheets = (await conn.QueryAsync<WeeklyEntrySheetModel>(@"
@@ -183,20 +189,28 @@ namespace SchoolEvaluationERP.Services
                            e.HasIncentive, e.IsContinuing,
                            ISNULL((
                                SELECT CAST(ROUND(ceg.WeightScore / NULLIF((
-                                   SELECT COUNT(1)
-                                   FROM dbo.EmployeeEvaluators ee2
-                                   INNER JOIN dbo.Evaluators ev2 ON ee2.EvaluatorID = ev2.EvaluatorID
-                                   WHERE ee2.EmployeeID = e.EmployeeID
-                                     AND ev2.GroupID = ev_curr.GroupID
-                                     AND ev2.IsActive = 1
+                                   SELECT CASE WHEN ISNULL(eg_curr.IsSystemGroup, 0) = 1 THEN 1
+                                               ELSE (
+                                                   SELECT COUNT(1)
+                                                   FROM dbo.EmployeeEvaluators ee2
+                                                   INNER JOIN dbo.Evaluators ev2 ON ee2.EvaluatorID = ev2.EvaluatorID
+                                                   WHERE ee2.EmployeeID = e.EmployeeID
+                                                     AND ev2.GroupID = ev_curr.GroupID
+                                                     AND ev2.IsActive = 1
+                                               )
+                                          END
                                ), 0), 2) AS DECIMAL(5,2))
                                FROM dbo.Evaluators ev_curr
+                               INNER JOIN dbo.EvaluatorGroups eg_curr ON eg_curr.GroupID = ev_curr.GroupID
                                INNER JOIN dbo.CategoryEvaluatorGroups ceg
                                    ON ceg.GroupID = ev_curr.GroupID AND ceg.CategoryID = e.CategoryID
                                WHERE ev_curr.EvaluatorID = @EvalID
-                                 AND EXISTS (
-                                     SELECT 1 FROM dbo.EmployeeEvaluators ee_chk
-                                     WHERE ee_chk.EmployeeID = e.EmployeeID AND ee_chk.EvaluatorID = @EvalID
+                                 AND (
+                                     ISNULL(eg_curr.IsSystemGroup, 0) = 1
+                                     OR EXISTS (
+                                         SELECT 1 FROM dbo.EmployeeEvaluators ee_chk
+                                         WHERE ee_chk.EmployeeID = e.EmployeeID AND ee_chk.EvaluatorID = @EvalID
+                                     )
                                  )
                            ), 0) AS EvaluatorWeight
                     FROM dbo.SheetEmployees se
@@ -214,7 +228,13 @@ namespace SchoolEvaluationERP.Services
                 for (int i = 0; i < empRows.Count; i++)
                 {
                     empRows[i].RowOrder = i + 1;
-                    empRows[i].InitializeCriteria(criteria, null, 0m, workspace.IsCountBasedEvaluation, workspace.MaxAllowedCount);
+                    empRows[i].InitializeCriteria(
+                        criteria,
+                        savedScoresByCriteriaId: null,
+                        savedBalancingDelta: 0m,
+                        isCountBased: workspace.IsCountBasedEvaluation,
+                        maxAllowedCount: workspace.MaxAllowedCount,
+                        savedRawCountsByCriteriaId: null);
                 }
 
                 sheet.EmployeeRows = new ObservableCollection<WeeklyScoreRowViewModel>(empRows);
@@ -276,10 +296,10 @@ namespace SchoolEvaluationERP.Services
 
             if (rec == null) return null;
 
-            bool isTemplateStillActive = ((int)rec.IsTemplateStillActive) == 1;
-
-            bool isSystemGrp = rec.SystemGroupCode != null && (rec.SystemGroupCode == "ABSENCE" || rec.SystemGroupCode == "DELAY");
-            int maxAllowedCnt = rec.MaxAllowedCount != null ? (int)rec.MaxAllowedCount : 3;
+            bool isTemplateStillActive = Convert.ToInt32(rec.IsTemplateStillActive) == 1;
+            bool isSystemGrp = Convert.ToBoolean(rec.IsSystemGroup);
+            string sysCode = (rec.SystemGroupCode as string) ?? string.Empty;
+            int maxAllowedCnt = rec.MaxAllowedCount != null ? Convert.ToInt32(rec.MaxAllowedCount) : 3;
 
             var workspace = new WeeklyEvaluationWorkspaceModel
             {
@@ -294,8 +314,8 @@ namespace SchoolEvaluationERP.Services
                 CreatedAt = rec.CreatedAt,
                 CreatedByUserName = rec.CreatedByUserName,
                 IsCountBasedEvaluation = isSystemGrp,
-                SystemGroupCode = rec.SystemGroupCode ?? string.Empty,
-                MaxAllowedCount = maxAllowedCnt > 0 ? maxAllowedCnt : 3
+                SystemGroupCode = sysCode,
+                MaxAllowedCount = maxAllowedCnt >= 0 ? maxAllowedCnt : 0
             };
 
             var savedScores = (await conn.QueryAsync<HistoricalScoreRowRaw>(@"
@@ -303,7 +323,8 @@ namespace SchoolEvaluationERP.Services
                        es.SheetID,
                        es.EmployeeID,
                        es.CriteriaID,
-                       es.GivenScore, es.RawEnteredCount,
+                       es.GivenScore,
+                       es.RawEnteredCount,
                        es.SnapshotEvaluatorWeight,
                        ISNULL(NULLIF(es.SnapshotEvaluationName, N''), ISNULL(e.EvaluationName, CONCAT(N'موظف #', es.EmployeeID))) AS EvaluationName,
                        ISNULL(NULLIF(es.SnapshotSystemName, N''), ISNULL(e.SystemName, N'')) AS SystemName,
@@ -399,14 +420,26 @@ namespace SchoolEvaluationERP.Services
                     };
 
                     var scoreDict = new Dictionary<int, decimal>();
+                    var rawCountsDict = new Dictionary<int, int>();
+
                     foreach (var s in empGrp)
                     {
                         scoreDict[s.CriteriaID] = s.GivenScore;
+                        if (s.RawEnteredCount.HasValue)
+                        {
+                            rawCountsDict[s.CriteriaID] = s.RawEnteredCount.Value;
+                        }
                     }
 
                     savedAdjustments.TryGetValue((sheetModel.SheetID, empVm.EmployeeID), out decimal savedDelta);
-                    var rawCountsDict = empGrp.Where(x => x.RawEnteredCount != null).ToDictionary(k => (int)k.CriteriaID, v => (int)v.RawEnteredCount!);
-                    empVm.InitializeCriteria(criteriaList, scoreDict, savedDelta, workspace.IsCountBasedEvaluation, workspace.MaxAllowedCount, rawCountsDict);
+                    empVm.InitializeCriteria(
+                        criteriaList,
+                        scoreDict,
+                        savedDelta,
+                        workspace.IsCountBasedEvaluation,
+                        workspace.MaxAllowedCount,
+                        rawCountsDict.Count > 0 ? rawCountsDict : null);
+
                     empRows.Add(empVm);
                 }
 
@@ -447,19 +480,22 @@ namespace SchoolEvaluationERP.Services
                 return (false, "لا يمكن تعديل هذا التقييم لأن القالب المرتبط به تم حذفه من النظام؛ السجل محفوظ في الأرشيف للقراءة فقط.", 0);
             }
 
-            foreach (var sheet in workspace.Sheets)
+            if (!workspace.IsCountBasedEvaluation)
             {
-                foreach (var emp in sheet.EmployeeRows)
+                foreach (var sheet in workspace.Sheets)
                 {
-                    for (int i = 0; i < emp.CriteriaCount; i++)
+                    foreach (var emp in sheet.EmployeeRows)
                     {
-                        int given = emp.GetScoreAt(i);
-                        int max = emp.GetMaxScoreAt(i);
-                        if (given < 0 || given > max)
+                        for (int i = 0; i < emp.CriteriaCount; i++)
                         {
-                            return (false,
-                                $"درجة الموظف ({emp.EvaluationName}) في الورقة ({sheet.SheetName}) هي ({given}) بينما الحد الأقصى المسموح هو ({max}).",
-                                0);
+                            int given = emp.GetScoreAt(i);
+                            int max = emp.GetMaxScoreAt(i);
+                            if (given < 0 || given > max)
+                            {
+                                return (false,
+                                    $"درجة الموظف ({emp.EvaluationName}) في الورقة ({sheet.SheetName}) هي ({given}) بينما الحد الأقصى المسموح هو ({max}).",
+                                    0);
+                            }
                         }
                     }
                 }
@@ -547,19 +583,19 @@ namespace SchoolEvaluationERP.Services
                         new { RecordID = targetRecordId }, tx);
                 }
 
-                // string insertScoreSql = @"
+                string insertScoreSql = @"
                     INSERT INTO dbo.EvaluationScores
                         (RecordID, SheetID, EmployeeID, CriteriaID, GivenScore, SnapshotEvaluatorWeight,
                          SnapshotEvaluationName, SnapshotSystemName, SnapshotBranchName, SnapshotCategoryName,
                          SnapshotJobTitle, SnapshotJobTypeName, SnapshotHasIncentive,
                          SnapshotSheetName, SnapshotTargetCategoryName, SnapshotSheetSortOrder,
-                         SnapshotCriteriaTitle, SnapshotCriteriaMaxScore, SnapshotCriteriaOrder)
+                         SnapshotCriteriaTitle, SnapshotCriteriaMaxScore, SnapshotCriteriaOrder, RawEnteredCount)
                     VALUES
                         (@RecordID, @SheetID, @EmployeeID, @CriteriaID, @GivenScore, @SnapshotWeight,
                          @SnapEvalName, @SnapSysName, @SnapBranch, @SnapCat,
                          @SnapJob, @SnapJobType, @SnapHasInc,
                          @SnapSheetName, @SnapTargetCat, @SnapSheetOrder,
-                         @SnapCritTitle, @SnapCritMax, @SnapCritOrder)";
+                         @SnapCritTitle, @SnapCritMax, @SnapCritOrder, @RawCnt)";
 
                 foreach (var sheet in workspace.Sheets)
                 {
@@ -571,20 +607,7 @@ namespace SchoolEvaluationERP.Services
                             decimal effectiveScore = emp.GetEffectiveCriteriaScoreForSave(c);
                             int? rawCount = workspace.IsCountBasedEvaluation ? emp.GetScoreAt(c) : (int?)null;
 
-                            await conn.ExecuteAsync(@"
-                                INSERT INTO dbo.EvaluationScores
-                                    (RecordID, SheetID, EmployeeID, CriteriaID, GivenScore, SnapshotEvaluatorWeight,
-                                     SnapshotEvaluationName, SnapshotSystemName, SnapshotBranchName, SnapshotCategoryName,
-                                     SnapshotJobTitle, SnapshotJobTypeName, SnapshotHasIncentive,
-                                     SnapshotSheetName, SnapshotTargetCategoryName, SnapshotSheetSortOrder,
-                                     SnapshotCriteriaTitle, SnapshotCriteriaMaxScore, SnapshotCriteriaOrder, RawEnteredCount)
-                                VALUES
-                                    (@RecordID, @SheetID, @EmployeeID, @CriteriaID, @GivenScore, @SnapshotWeight,
-                                     @SnapEvalName, @SnapSysName, @SnapBranch, @SnapCat,
-                                     @SnapJob, @SnapJobType, @SnapHasInc,
-                                     @SnapSheetName, @SnapTargetCat, @SnapSheetOrder,
-                                     @SnapCritTitle, @SnapCritMax, @SnapCritOrder, @RawCnt)",
-                            new
+                            await conn.ExecuteAsync(insertScoreSql, new
                             {
                                 RecordID = targetRecordId,
                                 sheet.SheetID,
@@ -685,7 +708,7 @@ namespace SchoolEvaluationERP.Services
 
             return list.ToList();
         }
-    
+
         private sealed class BulkExcelScoreRow
         {
             public int RowNumber { get; set; }
@@ -801,6 +824,20 @@ namespace SchoolEvaluationERP.Services
             int count = sheet.CriteriaColumns.Count;
             if (count == 0) return;
 
+            if (empRow.IsCountBasedMode)
+            {
+                if (clampedTotal > empRow.MaxAllowedCount && clampedTotal >= 20)
+                {
+                    empRow.SetScoreAt(0, 0);
+                    empRow.DirectCalculatedScoreOverride = clampedTotal;
+                }
+                else
+                {
+                    empRow.SetScoreAt(0, clampedTotal);
+                }
+                return;
+            }
+
             if (count == 1)
             {
                 empRow.SetScoreAt(0, clampedTotal);
@@ -845,10 +882,6 @@ namespace SchoolEvaluationERP.Services
             }
         }
 
-        /// <summary>
-        /// ميزة سحب التقييمات المجمعة لعدة أشهر (مثلاً 7 و 8 و 9 و 10) ولجميع المقيمين والموظفين من ملف إكسل واحد.
-        /// يحدد القالب من عمود (اسم جهة التقييم) ويطابق الموظف عبر (اسم المعلم + مكان التقييم + اسم الفئة) ويدخل (الدرجة الكلية).
-        /// </summary>
         public async Task<(bool IsSuccess, string SummaryMessage)> ImportBulkMultiMonthEvaluationsFromExcelAsync(
             string filePath,
             int targetYear)
@@ -1050,6 +1083,10 @@ namespace SchoolEvaluationERP.Services
                                         {
                                             targetEmp.SetScoreAt(c, savedEmp.GetScoreAt(c));
                                         }
+                                        if (savedEmp.DirectCalculatedScoreOverride.HasValue)
+                                        {
+                                            targetEmp.DirectCalculatedScoreOverride = savedEmp.DirectCalculatedScoreOverride.Value;
+                                        }
                                     }
                                 }
                             }
@@ -1064,7 +1101,6 @@ namespace SchoolEvaluationERP.Services
                         WeeklyEntrySheetModel? matchedSheet = null;
                         WeeklyScoreRowViewModel? matchedEmp = null;
 
-                        // المستوى 1: مطابقة (اسم المعلم + مكان التقييم/الفرع + اسم الفئة)
                         foreach (var sheet in workspace.Sheets)
                         {
                             foreach (var emp in sheet.EmployeeRows)
@@ -1083,7 +1119,6 @@ namespace SchoolEvaluationERP.Services
                             if (matchedEmp != null) break;
                         }
 
-                        // المستوى 2: مطابقة (اسم المعلم + مكان التقييم/الفرع)
                         if (matchedEmp == null)
                         {
                             foreach (var sheet in workspace.Sheets)
@@ -1102,7 +1137,6 @@ namespace SchoolEvaluationERP.Services
                             }
                         }
 
-                        // المستوى 3: مطابقة (اسم المعلم) إذا كان فريداً داخل قالب هذا المقيم
                         if (matchedEmp == null)
                         {
                             var nameMatches = new List<(WeeklyEntrySheetModel Sheet, WeeklyScoreRowViewModel Emp)>();
@@ -1181,7 +1215,4 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
-
-
-
 
