@@ -250,6 +250,72 @@ namespace SchoolEvaluationERP.Services
                     );
                 END
 
+                IF OBJECT_ID('dbo.MonthlyCategoryEvaluatorGroups', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyCategoryEvaluatorGroups (
+                        MonthlyCatEvalGrpID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        CategoryID INT NOT NULL,
+                        GroupID INT NOT NULL,
+                        WeightScore DECIMAL(5,2) NOT NULL CHECK (WeightScore > 0 AND WeightScore <= 100),
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyCatEvalGrp UNIQUE (EvalYear, EvalMonth, CategoryID, GroupID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyEmployeeEvaluators', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyEmployeeEvaluators (
+                        MonthlyEmpEvalID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        EmployeeID INT NOT NULL,
+                        EvaluatorID INT NOT NULL,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyEmpEval UNIQUE (EvalYear, EvalMonth, EmployeeID, EvaluatorID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyEmployeeSnapshots', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyEmployeeSnapshots (
+                        MonthlyEmpSnapID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        EmployeeID INT NOT NULL,
+                        CategoryID INT NOT NULL,
+                        HasIncentive BIT NOT NULL DEFAULT 1,
+                        IsContinuing BIT NOT NULL DEFAULT 1,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyEmpSnap UNIQUE (EvalYear, EvalMonth, EmployeeID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.TemplateExcludedEmployees', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.TemplateExcludedEmployees (
+                        TemplateExcludedID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvaluatorID INT NOT NULL,
+                        EmployeeID INT NOT NULL,
+                        CONSTRAINT UQ_TmplExcl_Eval_Emp UNIQUE (EvaluatorID, EmployeeID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyClosedReports', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyClosedReports (
+                        ClosedReportID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        IsLocked BIT NOT NULL DEFAULT 1,
+                        LockedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        LockedByUserName NVARCHAR(150) NOT NULL DEFAULT N'مدير النظام العام',
+                        SnapshotJson NVARCHAR(MAX) NULL,
+                        CONSTRAINT UQ_MonthlyClosedReport UNIQUE (EvalYear, EvalMonth)
+                    );
+                END
+
                 IF OBJECT_ID('dbo.Jobs', 'U') IS NULL
                 BEGIN
                     CREATE TABLE dbo.Jobs (
@@ -580,6 +646,72 @@ namespace SchoolEvaluationERP.Services
                     );
                 END
 
+                IF OBJECT_ID('dbo.MonthlyCategoryEvaluatorGroups', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyCategoryEvaluatorGroups (
+                        MonthlyCatEvalGrpID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        CategoryID INT NOT NULL,
+                        GroupID INT NOT NULL,
+                        WeightScore DECIMAL(5,2) NOT NULL CHECK (WeightScore > 0 AND WeightScore <= 100),
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyCatEvalGrp UNIQUE (EvalYear, EvalMonth, CategoryID, GroupID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyEmployeeEvaluators', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyEmployeeEvaluators (
+                        MonthlyEmpEvalID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        EmployeeID INT NOT NULL,
+                        EvaluatorID INT NOT NULL,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyEmpEval UNIQUE (EvalYear, EvalMonth, EmployeeID, EvaluatorID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyEmployeeSnapshots', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyEmployeeSnapshots (
+                        MonthlyEmpSnapID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        EmployeeID INT NOT NULL,
+                        CategoryID INT NOT NULL,
+                        HasIncentive BIT NOT NULL DEFAULT 1,
+                        IsContinuing BIT NOT NULL DEFAULT 1,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyEmpSnap UNIQUE (EvalYear, EvalMonth, EmployeeID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.TemplateExcludedEmployees', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.TemplateExcludedEmployees (
+                        TemplateExcludedID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvaluatorID INT NOT NULL,
+                        EmployeeID INT NOT NULL,
+                        CONSTRAINT UQ_TmplExcl_Eval_Emp UNIQUE (EvaluatorID, EmployeeID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyClosedReports', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyClosedReports (
+                        ClosedReportID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        IsLocked BIT NOT NULL DEFAULT 1,
+                        LockedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        LockedByUserName NVARCHAR(150) NOT NULL DEFAULT N'مدير النظام العام',
+                        SnapshotJson NVARCHAR(MAX) NULL,
+                        CONSTRAINT UQ_MonthlyClosedReport UNIQUE (EvalYear, EvalMonth)
+                    );
+                END
+
                 IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Records_Templates')
                     ALTER TABLE dbo.EvaluationRecords DROP CONSTRAINT FK_Records_Templates;
                 IF EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_Records_Evaluators')
@@ -691,9 +823,43 @@ namespace SchoolEvaluationERP.Services
                 WHERE NOT EXISTS (
                     SELECT 1 FROM dbo.UserPermissions up WHERE up.UserID = u.UserID AND up.ModuleCode = m.Code
                 );
+
+                -- الترحيل التلقائي الأولي لبيانات الأساسيات الشهرية (أوزان الفئات + إسناد الموظفين + حالات الموظفين)
+                DECLARE @SeedYear INT = YEAR(SYSDATETIME());
+                DECLARE @SeedMonth INT = MONTH(SYSDATETIME());
+                SELECT TOP 1 @SeedYear = EvalYear, @SeedMonth = EvalMonth
+                FROM dbo.EvaluationRecords
+                ORDER BY (EvalYear * 100 + EvalMonth) ASC;
+
+                IF NOT EXISTS (SELECT 1 FROM dbo.MonthlyCategoryEvaluatorGroups)
+                   AND EXISTS (SELECT 1 FROM dbo.CategoryEvaluatorGroups)
+                BEGIN
+                    INSERT INTO dbo.MonthlyCategoryEvaluatorGroups (EvalYear, EvalMonth, CategoryID, GroupID, WeightScore, UpdatedAt)
+                    SELECT @SeedYear, @SeedMonth, CategoryID, GroupID, WeightScore, SYSDATETIME()
+                    FROM dbo.CategoryEvaluatorGroups;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM dbo.MonthlyEmployeeEvaluators)
+                   AND EXISTS (SELECT 1 FROM dbo.EmployeeEvaluators)
+                BEGIN
+                    INSERT INTO dbo.MonthlyEmployeeEvaluators (EvalYear, EvalMonth, EmployeeID, EvaluatorID, UpdatedAt)
+                    SELECT DISTINCT @SeedYear, @SeedMonth, EmployeeID, EvaluatorID, SYSDATETIME()
+                    FROM dbo.EmployeeEvaluators;
+                END
+
+                IF NOT EXISTS (SELECT 1 FROM dbo.MonthlyEmployeeSnapshots)
+                   AND EXISTS (SELECT 1 FROM dbo.Employees WHERE IsActive = 1)
+                BEGIN
+                    INSERT INTO dbo.MonthlyEmployeeSnapshots (EvalYear, EvalMonth, EmployeeID, CategoryID, HasIncentive, IsContinuing, UpdatedAt)
+                    SELECT @SeedYear, @SeedMonth, EmployeeID, CategoryID, HasIncentive, IsContinuing, SYSDATETIME()
+                    FROM dbo.Employees
+                    WHERE IsActive = 1;
+                END
             ");
         }
     }
 }
+
+
 
 

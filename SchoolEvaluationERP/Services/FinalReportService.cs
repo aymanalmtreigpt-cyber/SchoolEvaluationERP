@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using ClosedXML.Excel;
 using Dapper;
@@ -22,6 +23,14 @@ namespace SchoolEvaluationERP.Services
         public FinalReportService(string connectionString)
         {
             _connectionString = connectionString;
+        }
+
+        private class ClosedReportSnapshotRow
+        {
+            public bool IsLocked { get; set; }
+            public DateTime? LockedAt { get; set; }
+            public string? LockedByUserName { get; set; }
+            public string? SnapshotJson { get; set; }
         }
 
         private class RawMonthlyEvaluatorScore
@@ -45,7 +54,8 @@ namespace SchoolEvaluationERP.Services
             int? filterBranchId = null,
             int? filterCategoryId = null,
             string searchQuery = "",
-            bool onlyDeservingIncentive = false)
+            bool onlyDeservingIncentive = false,
+            bool ignoreLockedSnapshot = false)
         {
             using var conn = new SqlConnection(_connectionString);
             await DatabaseSchemaService.EnsureSchemaV2Async(conn);
@@ -54,7 +64,57 @@ namespace SchoolEvaluationERP.Services
                 await conn.OpenAsync();
             }
 
-            // الموظفون المستمرون فقط يظهرون في التقرير النهائي (أما المنقطع فلا يظهر)
+            string cleanSearch = (searchQuery ?? string.Empty).Trim();
+
+            if (!ignoreLockedSnapshot)
+            {
+                var closedRow = await conn.QueryFirstOrDefaultAsync<ClosedReportSnapshotRow>(@"
+                    SELECT IsLocked, LockedAt, LockedByUserName, SnapshotJson
+                    FROM dbo.MonthlyClosedReports
+                    WHERE EvalYear = @Year AND EvalMonth = @Month",
+                    new { Year = year, Month = month });
+
+                if (closedRow is { IsLocked: true } && !string.IsNullOrWhiteSpace(closedRow.SnapshotJson))
+                {
+                    var frozen = JsonSerializer.Deserialize<MonthlyFinalReportSummary>(closedRow.SnapshotJson);
+                    if (frozen != null)
+                    {
+                        var filteredRows = (frozen.Rows ?? new List<EmployeeMonthlyReportRowDto>()).AsEnumerable();
+
+                        if (filterBranchId.HasValue && filterBranchId.Value > 0)
+                            filteredRows = filteredRows.Where(r => r.BranchID == filterBranchId.Value);
+
+                        if (filterCategoryId.HasValue && filterCategoryId.Value > 0)
+                            filteredRows = filteredRows.Where(r => r.CategoryID == filterCategoryId.Value);
+
+                        if (!string.IsNullOrEmpty(cleanSearch))
+                        {
+                            filteredRows = filteredRows.Where(r =>
+                                r.EvaluationName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) ||
+                                r.SystemName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) ||
+                                r.JobTitle.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) ||
+                                r.JobTypeName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase));
+                        }
+
+                        if (onlyDeservingIncentive)
+                            filteredRows = filteredRows.Where(r => r.FinalIncentiveAmount > 0m);
+
+                        var finalFrozenList = filteredRows.ToList();
+                        for (int i = 0; i < finalFrozenList.Count; i++)
+                            finalFrozenList[i].RowNumber = i + 1;
+
+                        frozen.Rows = finalFrozenList;
+                        frozen.IsMonthLocked = true;
+                        frozen.LockedAt = closedRow.LockedAt;
+                        frozen.LockedByUserName = string.IsNullOrWhiteSpace(closedRow.LockedByUserName) ? "مدير النظام العام" : closedRow.LockedByUserName;
+                        frozen.EffectiveConfigPeriodLabel = $"🔒 شهر معتمد ومغلق نهائياً بتاريخ {frozen.LockedAt?.ToString("yyyy-MM-dd hh:mm tt")} بواسطة ({frozen.LockedByUserName}) — القيد والأرقام مجمدة ومحمية بالكامل";
+                        return frozen;
+                    }
+                }
+            }
+
+            var periodResolution = await MonthlyPeriodConfigService.ResolveEffectivePeriodAsync(conn, year, month);
+
             string empSql = @"
                 SELECT e.EmployeeID, e.SystemName, e.EvaluationName,
                        e.BranchID, b.BranchName,
@@ -68,29 +128,43 @@ namespace SchoolEvaluationERP.Services
                 INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
                 INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
                 WHERE e.IsActive = 1
-                  AND e.IsContinuing = 1
-                  AND (@BranchID IS NULL OR e.BranchID = @BranchID)
-                  AND (@CategoryID IS NULL OR e.CategoryID = @CategoryID)
-                  AND (@Search = '' OR e.EvaluationName LIKE @Pattern OR e.SystemName LIKE @Pattern OR j.JobTitle LIKE @Pattern OR jt.JobTypeName LIKE @Pattern)
                 ORDER BY b.BranchName ASC, e.EvaluationName ASC";
 
-            var employees = (await conn.QueryAsync<EmployeeMonthlyReportRowDto>(empSql, new
+            var allEmployees = (await conn.QueryAsync<EmployeeMonthlyReportRowDto>(empSql)).ToList();
+            var catNameMap = (await conn.QueryAsync<dynamic>("SELECT CategoryID, CategoryName FROM dbo.Categories"))
+                .ToDictionary(x => (int)x.CategoryID, x => (string)x.CategoryName);
+            var snaps = await MonthlyPeriodConfigService.GetEffectiveEmployeeSnapshotsAsync(conn, year, month);
+
+            var employees = new List<EmployeeMonthlyReportRowDto>();
+            foreach (var emp in allEmployees)
             {
-                BranchID = filterBranchId,
-                CategoryID = filterCategoryId,
-                Search = (searchQuery ?? string.Empty).Trim(),
-                Pattern = $"%{(searchQuery ?? string.Empty).Trim()}%"
-            })).ToList();
+                if (snaps.TryGetValue(emp.EmployeeID, out var snap))
+                {
+                    emp.CategoryID = snap.CategoryID;
+                    if (catNameMap.TryGetValue(snap.CategoryID, out var cname))
+                        emp.CategoryName = cname;
+                    emp.HasIncentive = snap.HasIncentive;
+                    emp.IsContinuing = snap.IsContinuing;
+                }
 
-            var catGroups = (await conn.QueryAsync<dynamic>(@"
-                SELECT ceg.CategoryID, ceg.GroupID, eg.GroupName, ceg.WeightScore
-                FROM dbo.CategoryEvaluatorGroups ceg
-                INNER JOIN dbo.EvaluatorGroups eg ON ceg.GroupID = eg.GroupID
-                WHERE eg.IsActive = 1
-                ORDER BY ceg.WeightScore DESC")).ToList();
+                if (!emp.IsContinuing) continue;
+                if (filterBranchId.HasValue && filterBranchId.Value > 0 && emp.BranchID != filterBranchId.Value) continue;
+                if (filterCategoryId.HasValue && filterCategoryId.Value > 0 && emp.CategoryID != filterCategoryId.Value) continue;
+                if (!string.IsNullOrEmpty(cleanSearch) &&
+                    !emp.EvaluationName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) &&
+                    !emp.SystemName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) &&
+                    !emp.JobTitle.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) &&
+                    !emp.JobTypeName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
 
+                employees.Add(emp);
+            }
+
+            var catGroups = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
             var catGroupsMap = catGroups
-                .GroupBy(x => (int)x.CategoryID)
+                .GroupBy(x => x.CategoryID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
             var categoryIncentiveMap = (await conn.QueryAsync<dynamic>(@"
@@ -100,14 +174,9 @@ namespace SchoolEvaluationERP.Services
                 new { Year = year, Month = month }))
                 .ToDictionary(k => (int)k.CategoryID, v => (MaxAmt: (decimal)v.MaxIncentiveAmount, MinAmt: (decimal)v.MinIncentiveAmount));
 
-            var empAssignedEvals = (await conn.QueryAsync<dynamic>(@"
-                SELECT ee.EmployeeID, ee.EvaluatorID, ev.GroupID, ev.EvaluatorName
-                FROM dbo.EmployeeEvaluators ee
-                INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
-                WHERE ev.IsActive = 1")).ToList();
-
+            var empAssignedEvals = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
             var empAssignedMap = empAssignedEvals
-                .GroupBy(x => (int)x.EmployeeID)
+                .GroupBy(x => x.EmployeeID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
             string scoresSql = @"
@@ -148,7 +217,9 @@ namespace SchoolEvaluationERP.Services
                 DebitAccountTitle = debitAccountTitle,
                 MaxIncentiveAmount = maxIncentiveAmount,
                 MinIncentiveAmount = minIncentiveAmount,
-                RoundToNearest50 = roundToNearest50
+                RoundToNearest50 = roundToNearest50,
+                IsMonthLocked = false,
+                EffectiveConfigPeriodLabel = periodResolution.StatusBadgeText
             };
 
             var finalRows = new List<EmployeeMonthlyReportRowDto>();
@@ -172,10 +243,10 @@ namespace SchoolEvaluationERP.Services
                         ));
 
                 catGroupsMap.TryGetValue(emp.CategoryID, out var reqGroups);
-                reqGroups ??= new List<dynamic>();
+                reqGroups ??= new List<EffectiveCategoryWeightDto>();
 
                 empAssignedMap.TryGetValue(emp.EmployeeID, out var assignedForEmp);
-                assignedForEmp ??= new List<dynamic>();
+                assignedForEmp ??= new List<EffectiveEmployeeAssignmentDto>();
 
                 decimal monthlyTotalScore = 0m;
                 var breakdownParts = new List<string>();
@@ -186,11 +257,11 @@ namespace SchoolEvaluationERP.Services
                 {
                     foreach (var grp in reqGroups)
                     {
-                        int gId = (int)grp.GroupID;
-                        string gName = (string)grp.GroupName;
-                        decimal groupWeight = (decimal)grp.WeightScore;
+                        int gId = grp.GroupID;
+                        string gName = grp.GroupName;
+                        decimal groupWeight = grp.WeightScore;
 
-                        var assignedInGroup = assignedForEmp.Where(a => (int)a.GroupID == gId).ToList();
+                        var assignedInGroup = assignedForEmp.Where(a => a.GroupID == gId).ToList();
                         if (assignedInGroup.Count == 0)
                         {
                             missingEvaluatorNames.Add(gName);
@@ -203,8 +274,8 @@ namespace SchoolEvaluationERP.Services
 
                         foreach (var member in assignedInGroup)
                         {
-                            int evId = (int)member.EvaluatorID;
-                            string evName = (string)member.EvaluatorName;
+                            int evId = member.EvaluatorID;
+                            string evName = member.EvaluatorName;
 
                             if (rawByEvalId.TryGetValue(evId, out var evalScore))
                             {
@@ -316,6 +387,90 @@ namespace SchoolEvaluationERP.Services
 
             reportSummary.Rows = finalRows;
             return reportSummary;
+        }
+
+        public async Task<(bool IsSuccess, string Message)> LockMonthReportAsync(
+            int year,
+            int month,
+            string debitAccountTitle,
+            decimal maxIncentiveAmount,
+            decimal minIncentiveAmount,
+            bool roundToNearest50)
+        {
+            if (AuthService.CurrentSession == null)
+                return (false, "انتهت جلسة العمل، يرجى إعادة تسجيل الدخول.");
+
+            if (!AuthService.CurrentSession.IsAdmin &&
+                !AuthService.CurrentSession.HasPermission("FinalReport", "update") &&
+                !AuthService.CurrentSession.HasPermission("FinalReport", "insert"))
+            {
+                return (false, "عذراً، لا تملك صلاحية اعتماد وإغلاق التقرير الشهري.");
+            }
+
+            var fullReport = await GenerateMonthlyReportAsync(
+                year, month, debitAccountTitle, maxIncentiveAmount, minIncentiveAmount, roundToNearest50,
+                filterBranchId: null, filterCategoryId: null, searchQuery: "", onlyDeservingIncentive: false,
+                ignoreLockedSnapshot: true);
+
+            if (fullReport.Rows.Count == 0)
+                return (false, "لا توجد بيانات موظفين في هذا الشهر لاعتمادها وإغلاقها.");
+
+            string lockedBy = AuthService.CurrentSession.FullName;
+            fullReport.IsMonthLocked = true;
+            fullReport.LockedByUserName = lockedBy;
+            fullReport.LockedAt = DateTime.Now;
+
+            string snapshotJson = JsonSerializer.Serialize(fullReport);
+
+            using var conn = new SqlConnection(_connectionString);
+            await DatabaseSchemaService.EnsureSchemaV2Async(conn);
+            if (conn.State != ConnectionState.Open)
+                await conn.OpenAsync();
+
+            await conn.ExecuteAsync(@"
+                IF EXISTS (SELECT 1 FROM dbo.MonthlyClosedReports WHERE EvalYear = @Year AND EvalMonth = @Month)
+                BEGIN
+                    UPDATE dbo.MonthlyClosedReports
+                    SET IsLocked = 1,
+                        LockedAt = SYSDATETIME(),
+                        LockedByUserName = @LockedBy,
+                        SnapshotJson = @Json
+                    WHERE EvalYear = @Year AND EvalMonth = @Month;
+                END
+                ELSE
+                BEGIN
+                    INSERT INTO dbo.MonthlyClosedReports (EvalYear, EvalMonth, IsLocked, LockedAt, LockedByUserName, SnapshotJson)
+                    VALUES (@Year, @Month, 1, SYSDATETIME(), @LockedBy, @Json);
+                END",
+                new { Year = year, Month = month, LockedBy = lockedBy, Json = snapshotJson });
+
+            string mName = IncentiveCalculatorService.GetArabicMonthName(month);
+            return (true,
+                $"🔒 تم اعتماد وإغلاق شهر ({mName} {year} م) نهائياً بنجاح!\n" +
+                $"• إجمالي الموظفين المجمدين في القيد: {fullReport.TotalEmployeesCount} موظف\n" +
+                $"• إجمالي الحوافز المعتمدة للصرف: {fullReport.TotalIncentivePayout:N0} ريال\n" +
+                "لن يتأثر هذا الشهر بأي تعديلات مستقبلية على المقيمين أو الفئات أو الموظفين.");
+        }
+
+        public async Task<(bool IsSuccess, string Message)> UnlockMonthReportAsync(int year, int month)
+        {
+            if (AuthService.CurrentSession == null)
+                return (false, "انتهت جلسة العمل، يرجى إعادة تسجيل الدخول.");
+
+            if (!AuthService.CurrentSession.IsAdmin)
+                return (false, "فك إغلاق شهر مالي معتمد متاح لصلاحية (مدير النظام العام) فقط.");
+
+            using var conn = new SqlConnection(_connectionString);
+            await DatabaseSchemaService.EnsureSchemaV2Async(conn);
+            if (conn.State != ConnectionState.Open)
+                await conn.OpenAsync();
+
+            await conn.ExecuteAsync(
+                "DELETE FROM dbo.MonthlyClosedReports WHERE EvalYear = @Year AND EvalMonth = @Month",
+                new { Year = year, Month = month });
+
+            string mName = IncentiveCalculatorService.GetArabicMonthName(month);
+            return (true, $"🔓 تم فك إغلاق شهر ({mName} {year} م) بنجاح. أصبح الشهر مفتوحاً لإعادة الاحتساب والتعديل.");
         }
 
         public void ExportMonthlyReportToExcel(MonthlyFinalReportSummary report, string filePath)
@@ -439,7 +594,7 @@ namespace SchoolEvaluationERP.Services
                 wsDetails.Cell(dRow, 8).Value = r.EvaluatorsBreakdownSummary;
                 wsDetails.Cell(dRow, 9).Value = r.CompletionStatusDisplay;
                 wsDetails.Cell(dRow, 10).Value = r.MonthlyEvaluationAverage;
-                wsDetails.Cell(dRow, 11).Value = r.HasIncentive ? $"{r.DisplayedIncentivePercent}%" : "بدون حافز";
+                wsDetails.Cell(dRow, 11).Value = r.IncentivePercentDisplay;
                 wsDetails.Cell(dRow, 12).Value = r.FinalIncentiveAmount;
                 wsDetails.Cell(dRow, 12).Style.NumberFormat.Format = "#,##0";
 
@@ -587,5 +742,13 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
+
+
+
 
 

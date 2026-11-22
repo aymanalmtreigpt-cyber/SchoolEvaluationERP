@@ -3,6 +3,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using SchoolEvaluationERP.Models;
 using SchoolEvaluationERP.Services;
 
@@ -199,6 +201,51 @@ namespace SchoolEvaluationERP.Views
             }
         }
 
+        private void GridPermissions_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (GridPermissions.IsReadOnly || !GridPermissions.IsEnabled)
+                return;
+
+            var dep = e.OriginalSource as DependencyObject;
+            while (dep != null && dep is not DataGridCell)
+            {
+                dep = (dep is Visual || dep is System.Windows.Media.Media3D.Visual3D)
+                    ? VisualTreeHelper.GetParent(dep)
+                    : LogicalTreeHelper.GetParent(dep);
+            }
+
+            if (dep is not DataGridCell cell || cell.DataContext is not PermissionRowViewModel row)
+                return;
+
+            bool toggled = false;
+            if (ReferenceEquals(cell.Column, ColPermRead))
+            {
+                row.CanRead = !row.CanRead;
+                toggled = true;
+            }
+            else if (ReferenceEquals(cell.Column, ColPermInsert))
+            {
+                row.CanInsert = !row.CanInsert;
+                toggled = true;
+            }
+            else if (ReferenceEquals(cell.Column, ColPermUpdate))
+            {
+                row.CanUpdate = !row.CanUpdate;
+                toggled = true;
+            }
+            else if (ReferenceEquals(cell.Column, ColPermDelete))
+            {
+                row.CanDelete = !row.CanDelete;
+                toggled = true;
+            }
+
+            if (toggled)
+            {
+                GridPermissions.SelectedItem = row;
+                e.Handled = true;
+            }
+        }
+
         private void BtnCopyPerms_Click(object sender, RoutedEventArgs e)
         {
             if (_currentPermissions == null || _currentPermissions.Count == 0)
@@ -322,4 +369,6 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
 

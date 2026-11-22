@@ -17,7 +17,12 @@ namespace SchoolEvaluationERP.Views
     public partial class MasterDataView : UserControl
     {
         private readonly MasterDataService _service = new();
+        private readonly MonthlyPeriodConfigService _periodService = new();
         private bool _isRefreshingData;
+        private bool _isInitializingPeriod;
+
+        private int SelectedMasterYear => CmbMasterYear?.SelectedItem is int y ? y : DateTime.Now.Year;
+        private int SelectedMasterMonth => CmbMasterMonth?.SelectedValue is int m ? m : DateTime.Now.Month;
 
         // متغيرات التحكم بالتحديد وإلغاء التحديد بالضغط غير السريع دون التأثير على الدبل كليك أو التحديد المتعدد
         private DataGridRow? _lastNewlySelectedRow;
@@ -42,6 +47,7 @@ namespace SchoolEvaluationERP.Views
             Loaded += async (_, _) =>
             {
                 ApplyPermissionsToControls();
+                await InitializeMasterPeriodSelectorsAsync();
                 await RefreshAllMasterDataAsync();
             };
         }
@@ -228,18 +234,133 @@ namespace SchoolEvaluationERP.Views
             BtnDeleteEmployee.Visibility = CanDelete ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        private Task InitializeMasterPeriodSelectorsAsync()
+        {
+            _isInitializingPeriod = true;
+
+            int currentYear = DateTime.Now.Year;
+            int currentMonth = DateTime.Now.Month;
+            var years = new List<int> { currentYear - 1, currentYear, currentYear + 1, currentYear + 2 };
+
+            CmbMasterYear.ItemsSource = years;
+            CmbMasterYear.SelectedItem = currentYear;
+
+            CmbMasterMonth.ItemsSource = MonthOptionItem.GetAllMonths();
+            CmbMasterMonth.SelectedValue = currentMonth;
+
+            _isInitializingPeriod = false;
+            return Task.CompletedTask;
+        }
+
+        private async Task UpdatePeriodStatusBannerAsync()
+        {
+            var res = await _periodService.ResolveEffectivePeriodAsync(SelectedMasterYear, SelectedMasterMonth);
+            TxtMasterPeriodStatus.Text = res.StatusBadgeText;
+
+            if (res.IsMonthLocked)
+            {
+                BadgeMasterPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(254, 242, 242));
+                BadgeMasterPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(254, 202, 202));
+                TxtMasterPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28));
+            }
+            else if (res.IsOwnConfig)
+            {
+                BadgeMasterPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(236, 253, 245));
+                BadgeMasterPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(167, 243, 208));
+                TxtMasterPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(6, 95, 70));
+            }
+            else
+            {
+                BadgeMasterPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(239, 246, 255));
+                BadgeMasterPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(191, 219, 254));
+                TxtMasterPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175));
+            }
+
+            bool canEdit = CanInsert || CanUpdate;
+            BtnCopyMonthConfig.Visibility = canEdit ? Visibility.Visible : Visibility.Collapsed;
+            BtnRebuildMonthFromEvals.Visibility = (canEdit && !res.IsMonthLocked) ? Visibility.Visible : Visibility.Collapsed;
+            BtnResetMonthInherit.Visibility = (canEdit && res.IsOwnConfig && !res.IsMonthLocked) ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async void MasterPeriod_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isInitializingPeriod || !IsLoaded) return;
+            await RefreshAllMasterDataAsync();
+        }
+
+        private async void BtnCopyMonthConfig_Click(object sender, RoutedEventArgs e)
+        {
+            var dlg = new CopyMonthConfigDialog(SelectedMasterYear, SelectedMasterMonth)
+            {
+                Owner = Window.GetWindow(this)
+            };
+
+            if (dlg.ShowDialog() == true)
+            {
+                _isInitializingPeriod = true;
+                CmbMasterYear.SelectedItem = dlg.DestinationYear;
+                CmbMasterMonth.SelectedValue = dlg.DestinationMonth;
+                _isInitializingPeriod = false;
+                await RefreshAllMasterDataAsync();
+            }
+        }
+
+        private async void BtnResetMonthInherit_Click(object sender, RoutedEventArgs e)
+        {
+            string lbl = $"{IncentiveCalculatorService.GetArabicMonthName(SelectedMasterMonth)} {SelectedMasterYear} م";
+            var confirm = MessageBox.Show(
+                $"هل تريد إلغاء التخصيص المستقل لشهر ({lbl}) ليعود للوراثة التلقائية من أقرب شهر سابق؟",
+                "تأكيد إعادة الضبط",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            var (ok, msg) = await _periodService.ResetMonthToInheritAsync(SelectedMasterYear, SelectedMasterMonth);
+            MessageBox.Show(msg, ok ? "تمت إعادة الضبط" : "تنبيه", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+            if (ok) await RefreshAllMasterDataAsync();
+        }
+
+        private async void BtnRebuildMonthFromEvals_Click(object sender, RoutedEventArgs e)
+        {
+            string lbl = $"{IncentiveCalculatorService.GetArabicMonthName(SelectedMasterMonth)} {SelectedMasterYear} م";
+            var confirm = MessageBox.Show(
+                $"ستقوم هذه الأداة بقراءة التقييمات المحفوظة في شهر ({lbl}) واسترجاع أوزان الفئات وإسناد الموظفين كما كانت فعلياً وقت إدخال ذلك الشهر، وحفظها كنسخة مستقلة لشهر ({lbl}) فقط.\n\nهل تريد المتابعة؟",
+                "استرجاع أساسيات الشهر من التقييمات المحفوظة",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            BtnRebuildMonthFromEvals.IsEnabled = false;
+            var (ok, msg) = await _periodService.RebuildMonthConfigFromSavedEvaluationsAsync(SelectedMasterYear, SelectedMasterMonth);
+            BtnRebuildMonthFromEvals.IsEnabled = true;
+
+            MessageBox.Show(msg, ok ? "تم استرجاع أساسيات الشهر" : "تنبيه", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+            if (ok) await RefreshAllMasterDataAsync();
+        }
+
         private async Task RefreshAllMasterDataAsync()
         {
             _isRefreshingData = true;
 
+            int year = SelectedMasterYear;
+            int month = SelectedMasterMonth;
+
             int? prevFilterBranch = CmbFilterBranch.SelectedValue as int?;
             int? prevFilterCat = CmbFilterCategory.SelectedValue as int?;
 
+            await UpdatePeriodStatusBannerAsync();
+
             var branches = await _service.GetBranchesAsync();
-            var categories = await _service.GetCategoriesAsync();
+            var categories = await _service.GetCategoriesAsync(null, year, month);
             var jobs = await _service.GetJobsAsync();
             var jobTypes = await _service.GetJobTypesAsync();
-            var evalGroups = await _service.GetEvaluatorGroupsAsync();
+            var evalGroups = await _service.GetEvaluatorGroupsAsync(year, month);
 
             GridBranches.ItemsSource = branches;
             GridCategoriesHierarchy.ItemsSource = categories;
@@ -271,7 +392,7 @@ namespace SchoolEvaluationERP.Views
             int? filterCategory = CmbFilterCategory?.SelectedValue is int cId && cId > 0 ? cId : null;
             string statusFilter = (CmbFilterStatus?.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "ALL";
 
-            var employees = await _service.GetEmployeesAsync(search, filterBranch, filterCategory, statusFilter);
+            var employees = await _service.GetEmployeesAsync(search, filterBranch, filterCategory, statusFilter, SelectedMasterYear, SelectedMasterMonth);
             GridEmployees.ItemsSource = employees;
             TxtEmployeesCountBadge.Text = $"إجمالي الموظفين: {employees.Count}";
         }
@@ -746,7 +867,7 @@ namespace SchoolEvaluationERP.Views
                 try
                 {
                     BtnDownloadEvaluatorsTemplate.IsEnabled = false;
-                    await _service.GenerateEvaluatorsExcelTemplateAsync(sfd.FileName);
+                    await _service.GenerateEvaluatorsExcelTemplateAsync(sfd.FileName, SelectedMasterYear, SelectedMasterMonth);
                     BtnDownloadEvaluatorsTemplate.IsEnabled = true;
 
                     MessageBox.Show(
@@ -775,7 +896,7 @@ namespace SchoolEvaluationERP.Views
             if (ofd.ShowDialog() == true)
             {
                 BtnImportEvaluatorsExcel.IsEnabled = false;
-                var (isSuccess, summary) = await _service.ImportEvaluatorsAndWeightsFromExcelAsync(ofd.FileName);
+                var (isSuccess, summary) = await _service.ImportEvaluatorsAndWeightsFromExcelAsync(ofd.FileName, SelectedMasterYear, SelectedMasterMonth);
                 BtnImportEvaluatorsExcel.IsEnabled = true;
 
                 MessageBox.Show(
@@ -802,7 +923,7 @@ namespace SchoolEvaluationERP.Views
 
             int initialCatId = (GridCategoriesWeights.SelectedItems.Cast<CategoryDto>().LastOrDefault()
                                ?? GridCategoriesWeights.SelectedItem as CategoryDto)?.CategoryID ?? 0;
-            var dlg = new CategoryDialog(initialCatId)
+            var dlg = new CategoryDialog(initialCatId, SelectedMasterYear, SelectedMasterMonth)
             {
                 Owner = Window.GetWindow(this)
             };
@@ -834,7 +955,7 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            var dlg = new EmployeeDialog(null)
+            var dlg = new EmployeeDialog(null, SelectedMasterYear, SelectedMasterMonth)
             {
                 Owner = Window.GetWindow(this)
             };
@@ -854,7 +975,7 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            var dlg = new EmployeeDialog(selected)
+            var dlg = new EmployeeDialog(selected, SelectedMasterYear, SelectedMasterMonth)
             {
                 Owner = Window.GetWindow(this)
             };
@@ -942,7 +1063,7 @@ namespace SchoolEvaluationERP.Views
                 try
                 {
                     BtnDownloadExcelTemplate.IsEnabled = false;
-                    await _service.GenerateEmployeesExcelTemplateAsync(sfd.FileName);
+                    await _service.GenerateEmployeesExcelTemplateAsync(sfd.FileName, SelectedMasterYear, SelectedMasterMonth);
                     BtnDownloadExcelTemplate.IsEnabled = true;
 
                     MessageBox.Show(
@@ -973,7 +1094,7 @@ namespace SchoolEvaluationERP.Views
             if (ofd.ShowDialog() == true)
             {
                 BtnImportExcel.IsEnabled = false;
-                var (isSuccess, summary) = await _service.ImportEmployeesFromExcelAsync(ofd.FileName);
+                var (isSuccess, summary) = await _service.ImportEmployeesFromExcelAsync(ofd.FileName, SelectedMasterYear, SelectedMasterMonth);
                 BtnImportExcel.IsEnabled = true;
 
                 MessageBox.Show(summary, isSuccess ? "تقرير استيراد الموظفين" : "تنبيه الاستيراد", MessageBoxButton.OK, isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
@@ -986,5 +1107,16 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
 
 

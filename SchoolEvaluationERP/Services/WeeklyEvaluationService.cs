@@ -131,11 +131,35 @@ namespace SchoolEvaluationERP.Services
             };
         }
 
+        private class DynamicEmpCandidate
+        {
+            public int EmployeeID { get; set; }
+            public string EvaluationName { get; set; } = string.Empty;
+            public string SystemName { get; set; } = string.Empty;
+            public int BranchID { get; set; }
+            public string BranchName { get; set; } = string.Empty;
+            public int CategoryID { get; set; }
+            public string CategoryName { get; set; } = string.Empty;
+            public string JobTitle { get; set; } = string.Empty;
+            public string JobTypeName { get; set; } = string.Empty;
+            public bool HasIncentive { get; set; }
+            public bool IsContinuing { get; set; }
+        }
+
+        private class SheetMetaHolder
+        {
+            public WeeklyEntrySheetModel Sheet { get; set; } = new();
+            public int TargetCategoryID { get; set; }
+            public int? TargetBranchID { get; set; }
+            public List<WeeklyScoreRowViewModel> Rows { get; set; } = new();
+        }
+
         public async Task<WeeklyEvaluationWorkspaceModel?> PrepareNewWorkspaceAsync(int templateId, int year, int month)
         {
             using var conn = await OpenReadyConnectionAsync();
             var header = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
-                SELECT t.TemplateID, t.VersionNumber, t.EvaluatorID, ev.EvaluatorName, ISNULL(eg.GroupName, N'') AS GroupName,
+                SELECT t.TemplateID, t.VersionNumber, t.EvaluatorID, ev.EvaluatorName, ev.GroupID,
+                       ISNULL(eg.GroupName, N'') AS GroupName,
                        ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup,
                        ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode,
                        ISNULL(eg.MaxAllowedCount, 3) AS MaxAllowedCount
@@ -147,89 +171,232 @@ namespace SchoolEvaluationERP.Services
             if (header == null) return null;
 
             bool isCountBased = Convert.ToBoolean(header.IsSystemGroup);
+            int groupId = (int)header.GroupID;
+            int evaluatorId = (int)header.EvaluatorID;
             string sysCode = (header.SystemGroupCode as string) ?? string.Empty;
             int maxAllowed = Convert.ToInt32(header.MaxAllowedCount);
             if (maxAllowed < 0) maxAllowed = 0;
+
+            var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
+
+            if (!isCountBased)
+            {
+                await TemplateService.EnsureMissingCategorySheetsForTemplateAsync(conn, templateId, evaluatorId, year, month);
+            }
 
             var workspace = new WeeklyEvaluationWorkspaceModel
             {
                 RecordID = 0,
                 TemplateID = header.TemplateID,
                 TemplateVersionNumber = header.VersionNumber,
-                EvaluatorID = header.EvaluatorID,
+                EvaluatorID = evaluatorId,
                 EvaluatorName = header.EvaluatorName,
                 GroupName = header.GroupName,
                 EvalYear = year,
                 EvalMonth = month,
-                CanBeModified = true,
+                IsMonthLocked = isLocked,
+                LockedByUserName = lockedBy,
+                CanBeModified = !isLocked,
                 IsCountBasedEvaluation = isCountBased,
                 SystemGroupCode = sysCode,
                 MaxAllowedCount = maxAllowed
             };
 
-            var sheets = (await conn.QueryAsync<WeeklyEntrySheetModel>(@"
-                SELECT SheetID, SheetName, TargetCategoryName, SortOrder
+            var rawSheets = (await conn.QueryAsync<dynamic>(@"
+                SELECT SheetID, SheetName, TargetCategoryID, TargetBranchID, TargetCategoryName, SortOrder
                 FROM dbo.TemplateSheets
                 WHERE TemplateID = @ID
                 ORDER BY SortOrder ASC", new { ID = templateId })).ToList();
 
-            foreach (var sheet in sheets)
+            var rawEmps = (await conn.QueryAsync<DynamicEmpCandidate>(@"
+                SELECT e.EmployeeID, e.EvaluationName, e.SystemName,
+                       e.BranchID, b.BranchName,
+                       e.CategoryID, c.CategoryName,
+                       j.JobTitle, jt.JobTypeName,
+                       e.HasIncentive, e.IsContinuing
+                FROM dbo.Employees e
+                INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
+                INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
+                INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
+                INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
+                WHERE e.IsActive = 1")).ToList();
+
+            var catNameMap = (await conn.QueryAsync<dynamic>("SELECT CategoryID, CategoryName FROM dbo.Categories"))
+                .ToDictionary(x => (int)x.CategoryID, x => (string)x.CategoryName);
+
+            var snaps = await MonthlyPeriodConfigService.GetEffectiveEmployeeSnapshotsAsync(conn, year, month);
+            var contEmpMap = new Dictionary<int, DynamicEmpCandidate>();
+            foreach (var emp in rawEmps)
             {
+                if (snaps.TryGetValue(emp.EmployeeID, out var snap))
+                {
+                    emp.CategoryID = snap.CategoryID;
+                    if (catNameMap.TryGetValue(snap.CategoryID, out var cname))
+                        emp.CategoryName = cname;
+                    emp.HasIncentive = snap.HasIncentive;
+                    emp.IsContinuing = snap.IsContinuing;
+                }
+                if (emp.IsContinuing)
+                    contEmpMap[emp.EmployeeID] = emp;
+            }
+
+            var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var weightMap = effWeights.ToDictionary(w => (w.CategoryID, w.GroupID), w => w.WeightScore);
+            var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+            var assignedToEval = effAssigns.Where(a => a.EvaluatorID == evaluatorId).Select(a => a.EmployeeID).ToHashSet();
+            var assignedCountByEmpGroup = effAssigns
+                .GroupBy(a => (a.EmployeeID, a.GroupID))
+                .ToDictionary(g => g.Key, g => g.Select(x => x.EvaluatorID).Distinct().Count());
+
+            HashSet<int> excludedEmpIds;
+            HashSet<int> eligibleEmpIds;
+            if (isCountBased)
+            {
+                excludedEmpIds = (await conn.QueryAsync<int>(
+                    "SELECT EmployeeID FROM dbo.SystemTemplateExcludedEmployees WHERE GroupID = @GID",
+                    new { GID = groupId })).ToHashSet();
+                var sysCatIds = effWeights.Where(w => w.GroupID == groupId).Select(w => w.CategoryID).ToHashSet();
+                eligibleEmpIds = contEmpMap.Values
+                    .Where(e => sysCatIds.Contains(e.CategoryID) && !excludedEmpIds.Contains(e.EmployeeID))
+                    .Select(e => e.EmployeeID).ToHashSet();
+            }
+            else
+            {
+                excludedEmpIds = (await conn.QueryAsync<int>(
+                    "SELECT EmployeeID FROM dbo.TemplateExcludedEmployees WHERE EvaluatorID = @EvalID",
+                    new { EvalID = evaluatorId })).ToHashSet();
+                eligibleEmpIds = contEmpMap.Values
+                    .Where(e => assignedToEval.Contains(e.EmployeeID) && !excludedEmpIds.Contains(e.EmployeeID))
+                    .Select(e => e.EmployeeID).ToHashSet();
+            }
+
+            decimal CalcWeight(DynamicEmpCandidate emp)
+            {
+                if (!weightMap.TryGetValue((emp.CategoryID, groupId), out decimal gw) || gw <= 0m) return 0m;
+                if (isCountBased) return Math.Round(gw, 2, MidpointRounding.AwayFromZero);
+                if (!assignedCountByEmpGroup.TryGetValue((emp.EmployeeID, groupId), out int cnt) || cnt <= 0) return 0m;
+                return Math.Round(gw / cnt, 2, MidpointRounding.AwayFromZero);
+            }
+
+            var holders = new List<SheetMetaHolder>();
+            var placedEmpIds = new HashSet<int>();
+
+            foreach (var rs in rawSheets)
+            {
+                int sheetId = (int)rs.SheetID;
+                int targetCatId = (int)rs.TargetCategoryID;
+                int? targetBranchId = rs.TargetBranchID == null ? (int?)null : (int)rs.TargetBranchID;
+
+                var sheetModel = new WeeklyEntrySheetModel
+                {
+                    SheetID = sheetId,
+                    SheetName = (string)rs.SheetName,
+                    TargetCategoryName = (string)rs.TargetCategoryName,
+                    SortOrder = (int)rs.SortOrder
+                };
+
                 var criteria = (await conn.QueryAsync<CriteriaColumnModel>(@"
                     SELECT CriteriaID, CriteriaTitle, MaxScore, ColumnOrder
                     FROM dbo.SheetCriteria
                     WHERE SheetID = @SheetID
-                    ORDER BY ColumnOrder ASC", new { SheetID = sheet.SheetID })).ToList();
+                    ORDER BY ColumnOrder ASC", new { SheetID = sheetId })).ToList();
+                sheetModel.CriteriaColumns = criteria;
 
-                sheet.CriteriaColumns = criteria;
-
-                var empRows = (await conn.QueryAsync<WeeklyScoreRowViewModel>(@"
-                    SELECT se.EmployeeID, se.RowOrder, e.EvaluationName, e.SystemName,
-                           b.BranchName, j.JobTitle, jt.JobTypeName, c.CategoryName,
-                           e.HasIncentive, e.IsContinuing,
-                           ISNULL((
-                               SELECT CAST(ROUND(ceg.WeightScore / NULLIF((
-                                   SELECT CASE WHEN ISNULL(eg_curr.IsSystemGroup, 0) = 1 THEN 1
-                                               ELSE (
-                                                   SELECT COUNT(1)
-                                                   FROM dbo.EmployeeEvaluators ee2
-                                                   INNER JOIN dbo.Evaluators ev2 ON ee2.EvaluatorID = ev2.EvaluatorID
-                                                   WHERE ee2.EmployeeID = e.EmployeeID
-                                                     AND ev2.GroupID = ev_curr.GroupID
-                                                     AND ev2.IsActive = 1
-                                               )
-                                          END
-                               ), 0), 2) AS DECIMAL(5,2))
-                               FROM dbo.Evaluators ev_curr
-                               INNER JOIN dbo.EvaluatorGroups eg_curr ON eg_curr.GroupID = ev_curr.GroupID
-                               INNER JOIN dbo.CategoryEvaluatorGroups ceg
-                                   ON ceg.GroupID = ev_curr.GroupID AND ceg.CategoryID = e.CategoryID
-                               WHERE ev_curr.EvaluatorID = @EvalID
-                                 AND (
-                                     ISNULL(eg_curr.IsSystemGroup, 0) = 1
-                                     OR EXISTS (
-                                         SELECT 1 FROM dbo.EmployeeEvaluators ee_chk
-                                         WHERE ee_chk.EmployeeID = e.EmployeeID AND ee_chk.EvaluatorID = @EvalID
-                                     )
-                                 )
-                           ), 0) AS EvaluatorWeight
-                    FROM dbo.SheetEmployees se
-                    INNER JOIN dbo.Employees e ON se.EmployeeID = e.EmployeeID
-                    INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                    INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
-                    INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
-                    INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
-                    WHERE se.SheetID = @SheetID
-                      AND e.IsActive = 1
-                      AND e.IsContinuing = 1
-                    ORDER BY se.RowOrder ASC",
-                    new { SheetID = sheet.SheetID, EvalID = workspace.EvaluatorID })).ToList();
-
-                for (int i = 0; i < empRows.Count; i++)
+                var holder = new SheetMetaHolder
                 {
-                    empRows[i].RowOrder = i + 1;
-                    empRows[i].InitializeCriteria(
-                        criteria,
+                    Sheet = sheetModel,
+                    TargetCategoryID = targetCatId,
+                    TargetBranchID = (targetBranchId.HasValue && targetBranchId.Value > 0) ? targetBranchId.Value : null
+                };
+
+                var savedEmpIds = (await conn.QueryAsync<int>(@"
+                    SELECT EmployeeID
+                    FROM dbo.SheetEmployees
+                    WHERE SheetID = @SheetID
+                    ORDER BY RowOrder ASC", new { SheetID = sheetId })).ToList();
+
+                foreach (int empId in savedEmpIds)
+                {
+                    if (!eligibleEmpIds.Contains(empId) || !contEmpMap.TryGetValue(empId, out var emp))
+                        continue;
+
+                    if (!isCountBased)
+                    {
+                        if (holder.TargetCategoryID > 0 && holder.TargetCategoryID != emp.CategoryID)
+                            continue;
+                        if (holder.TargetBranchID.HasValue && holder.TargetBranchID.Value != emp.BranchID)
+                            continue;
+                    }
+
+                    if (!placedEmpIds.Add(empId))
+                        continue;
+
+                    holder.Rows.Add(new WeeklyScoreRowViewModel
+                    {
+                        EmployeeID = emp.EmployeeID,
+                        EvaluationName = emp.EvaluationName,
+                        SystemName = emp.SystemName,
+                        BranchName = emp.BranchName,
+                        JobTitle = emp.JobTitle,
+                        JobTypeName = emp.JobTypeName,
+                        CategoryName = emp.CategoryName,
+                        HasIncentive = emp.HasIncentive,
+                        IsContinuing = emp.IsContinuing,
+                        EvaluatorWeight = CalcWeight(emp)
+                    });
+                }
+
+                holders.Add(holder);
+            }
+
+            // إدراج الموظفين المسندين الجدد لهذا المقيم في الشهر المختار داخل الورقة المطابقة تلقائياً
+            var unmatchedNames = new List<string>();
+            var remainingEmps = eligibleEmpIds
+                .Where(id => !placedEmpIds.Contains(id) && contEmpMap.ContainsKey(id))
+                .Select(id => contEmpMap[id])
+                .OrderBy(e => e.CategoryID).ThenBy(e => e.BranchName).ThenBy(e => e.EvaluationName)
+                .ToList();
+
+            foreach (var emp in remainingEmps)
+            {
+                SheetMetaHolder? targetHolder = isCountBased
+                    ? holders.FirstOrDefault()
+                    : (holders.FirstOrDefault(h => h.TargetCategoryID == emp.CategoryID && h.TargetBranchID.HasValue && h.TargetBranchID.Value == emp.BranchID)
+                       ?? holders.FirstOrDefault(h => h.TargetCategoryID == emp.CategoryID && !h.TargetBranchID.HasValue));
+
+                if (targetHolder == null)
+                {
+                    unmatchedNames.Add($"{emp.EvaluationName} ({emp.CategoryName} - {emp.BranchName})");
+                    continue;
+                }
+
+                placedEmpIds.Add(emp.EmployeeID);
+                targetHolder.Rows.Add(new WeeklyScoreRowViewModel
+                {
+                    EmployeeID = emp.EmployeeID,
+                    EvaluationName = emp.EvaluationName,
+                    SystemName = emp.SystemName,
+                    BranchName = emp.BranchName,
+                    JobTitle = emp.JobTitle,
+                    JobTypeName = emp.JobTypeName,
+                    CategoryName = emp.CategoryName,
+                    HasIncentive = emp.HasIncentive,
+                    IsContinuing = emp.IsContinuing,
+                    EvaluatorWeight = CalcWeight(emp)
+                });
+            }
+
+            bool hasAnyPopulatedHolder = holders.Any(h => h.Rows.Count > 0);
+            foreach (var h in holders)
+            {
+                if (!isCountBased && hasAnyPopulatedHolder && h.Rows.Count == 0)
+                    continue;
+
+                for (int i = 0; i < h.Rows.Count; i++)
+                {
+                    h.Rows[i].RowOrder = i + 1;
+                    h.Rows[i].InitializeCriteria(
+                        h.Sheet.CriteriaColumns,
                         savedScoresByCriteriaId: null,
                         savedBalancingDelta: 0m,
                         isCountBased: workspace.IsCountBasedEvaluation,
@@ -237,8 +404,16 @@ namespace SchoolEvaluationERP.Services
                         savedRawCountsByCriteriaId: null);
                 }
 
-                sheet.EmployeeRows = new ObservableCollection<WeeklyScoreRowViewModel>(empRows);
-                workspace.Sheets.Add(sheet);
+                h.Sheet.EmployeeRows = new ObservableCollection<WeeklyScoreRowViewModel>(h.Rows);
+                workspace.Sheets.Add(h.Sheet);
+            }
+
+            if (unmatchedNames.Count > 0)
+            {
+                string preview = string.Join("، ", unmatchedNames.Take(4));
+                if (unmatchedNames.Count > 4) preview += $" ... (+{unmatchedNames.Count - 4})";
+                workspace.UnmatchedEmployeesWarning =
+                    $"⚠ تنبيه: يوجد ({unmatchedNames.Count}) موظف مسندين لهذا المقيم في هذا الشهر ولا توجد ورقة مطابقة لفئتهم/فرعهم في القالب: {preview}. يمكنك إضافة ورقة لفئتهم من شاشة (3. قوالب التقييم).";
             }
 
             return workspace;
@@ -358,8 +533,12 @@ namespace SchoolEvaluationERP.Services
                 WHERE RecordID = @RecordID", new { RecordID = recordId }))
                 .ToDictionary(k => ((int)k.SheetID, (int)k.EmployeeID), v => (decimal)v.BalancingDelta);
 
+            var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, workspace.EvalYear, workspace.EvalMonth);
+            workspace.IsMonthLocked = isLocked;
+            workspace.LockedByUserName = lockedBy;
+
             bool anyActiveEmployeeInRecord = savedScores.Any(s => s.IsEmployeeStillActive);
-            workspace.CanBeModified = isTemplateStillActive && anyActiveEmployeeInRecord;
+            workspace.CanBeModified = !isLocked && isTemplateStillActive && anyActiveEmployeeInRecord;
 
             var sheetGroups = savedScores
                 .GroupBy(s => s.SheetID)
@@ -450,6 +629,131 @@ namespace SchoolEvaluationERP.Services
             return workspace;
         }
 
+        private static WeeklyEntrySheetModel? FindMatchingSavedSheet(
+            WeeklyEvaluationWorkspaceModel savedWorkspace,
+            WeeklyEntrySheetModel latestSheet,
+            int latestTotalSheetsCount)
+        {
+            var byId = savedWorkspace.Sheets.FirstOrDefault(s => s.SheetID == latestSheet.SheetID);
+            if (byId != null) return byId;
+
+            string latestName = (latestSheet.SheetName ?? string.Empty).Trim();
+            var byName = savedWorkspace.Sheets.FirstOrDefault(s =>
+                string.Equals((s.SheetName ?? string.Empty).Trim(), latestName, StringComparison.OrdinalIgnoreCase));
+            if (byName != null) return byName;
+
+            string latestCat = (latestSheet.TargetCategoryName ?? string.Empty).Trim();
+            if (!string.IsNullOrEmpty(latestCat))
+            {
+                var byCat = savedWorkspace.Sheets.FirstOrDefault(s =>
+                    string.Equals((s.TargetCategoryName ?? string.Empty).Trim(), latestCat, StringComparison.OrdinalIgnoreCase));
+                if (byCat != null) return byCat;
+            }
+
+            if (savedWorkspace.Sheets.Count == 1 && latestTotalSheetsCount == 1)
+                return savedWorkspace.Sheets[0];
+
+            return null;
+        }
+
+        /// <summary>
+        /// يقارن جميع أوراق الشهر المحفوظ حالياً بأحدث نسخة فعالة من القالب ويستخرج:
+        /// 1) الموظفين الجدد المضافين في القالب وغير الموجودين في هذا الشهر.
+        /// 2) الموظفين الذين أُزيلوا من القالب وما زالوا موجودين في هذا الشهر (مع درجاتهم المحفوظة).
+        /// </summary>
+        public async Task<TemplateSyncComparisonResult> CompareWorkspaceWithLatestTemplateAsync(
+            WeeklyEvaluationWorkspaceModel savedWorkspace,
+            int latestTemplateId)
+        {
+            var result = new TemplateSyncComparisonResult();
+            if (savedWorkspace == null || latestTemplateId <= 0)
+                return result;
+
+            var latestWorkspace = await PrepareNewWorkspaceAsync(latestTemplateId, savedWorkspace.EvalYear, savedWorkspace.EvalMonth);
+            if (latestWorkspace == null || latestWorkspace.Sheets.Count == 0)
+                return result;
+
+            var existingEmpIds = savedWorkspace.Sheets
+                .SelectMany(s => s.EmployeeRows)
+                .Select(e => e.EmployeeID)
+                .ToHashSet();
+
+            var latestEmpIds = latestWorkspace.Sheets
+                .SelectMany(s => s.EmployeeRows)
+                .Select(e => e.EmployeeID)
+                .ToHashSet();
+
+            // القسم الأول: موظفون مضافون حديثاً في القالب الحالي وغير موجودين في هذا الشهر
+            var seenNewEmpIds = new HashSet<int>();
+            foreach (var latestSheet in latestWorkspace.Sheets)
+            {
+                var matchedSavedSheet = FindMatchingSavedSheet(savedWorkspace, latestSheet, latestWorkspace.Sheets.Count);
+
+                foreach (var latestEmp in latestSheet.EmployeeRows)
+                {
+                    if (existingEmpIds.Contains(latestEmp.EmployeeID) || !seenNewEmpIds.Add(latestEmp.EmployeeID))
+                        continue;
+
+                    result.NewlyAddedToTemplate.Add(new TemplateSyncEmployeeItem
+                    {
+                        IsSelected = false,
+                        EmployeeID = latestEmp.EmployeeID,
+                        EvaluationName = latestEmp.EvaluationName,
+                        SystemName = latestEmp.SystemName,
+                        BranchName = latestEmp.BranchName,
+                        CategoryName = latestEmp.CategoryName,
+                        FullJobDisplay = latestEmp.FullJobDisplay,
+                        SheetName = matchedSavedSheet != null ? matchedSavedSheet.SheetName : latestSheet.SheetName,
+                        IsNewSheetTarget = matchedSavedSheet == null,
+                        MatchedSavedSheet = matchedSavedSheet,
+                        SourceLatestSheet = latestSheet,
+                        SourceLatestEmployeeRow = latestEmp
+                    });
+                }
+            }
+
+            // القسم الثاني: موظفون أُزيلوا من القالب الحالي وما زالوا موجودين في هذا الشهر
+            foreach (var savedSheet in savedWorkspace.Sheets)
+            {
+                foreach (var savedEmp in savedSheet.EmployeeRows)
+                {
+                    if (latestEmpIds.Contains(savedEmp.EmployeeID))
+                        continue;
+
+                    string scoreInfo;
+                    if (savedWorkspace.IsCountBasedEvaluation)
+                    {
+                        scoreInfo = savedEmp.DirectCalculatedScoreOverride.HasValue
+                            ? $"{savedEmp.RawTotalOutOf100:0.##} / 100"
+                            : $"العدد: {savedEmp.GetScoreAt(0)}  ←  ({savedEmp.RawTotalOutOf100:0.##} / 100)";
+                    }
+                    else
+                    {
+                        scoreInfo = savedEmp.BalancingDelta != 0m
+                            ? $"{savedEmp.RawTotalOutOf100:0.##} / 100 (موازنة {savedEmp.BalancingDeltaDisplay})"
+                            : $"{savedEmp.RawTotalOutOf100:0.##} / 100";
+                    }
+
+                    result.RemovedFromTemplate.Add(new TemplateSyncEmployeeItem
+                    {
+                        IsSelected = false,
+                        EmployeeID = savedEmp.EmployeeID,
+                        EvaluationName = savedEmp.EvaluationName,
+                        SystemName = savedEmp.SystemName,
+                        BranchName = savedEmp.BranchName,
+                        CategoryName = savedEmp.CategoryName,
+                        FullJobDisplay = savedEmp.FullJobDisplay,
+                        SheetName = savedSheet.SheetName,
+                        SavedScoreDisplay = scoreInfo,
+                        ExistingSavedSheet = savedSheet,
+                        ExistingSavedEmployeeRow = savedEmp
+                    });
+                }
+            }
+
+            return result;
+        }
+
         public async Task<(bool IsSuccess, string Message, int SavedRecordId)> SaveMonthlyEvaluationAsync(
             WeeklyEvaluationWorkspaceModel workspace,
             string permissionModuleCode = "ScoreEntry")
@@ -470,7 +774,17 @@ namespace SchoolEvaluationERP.Services
             if (workspace.Sheets.Count == 0)
                 return (false, "لا توجد أوراق تقييم داخل هذا القالب.", 0);
 
+            if (workspace.Sheets.Sum(s => s.EmployeeRows.Count) == 0)
+                return (false, "يجب أن يحتوي التقييم الشهري على موظف واحد على الأقل قبل الحفظ.", 0);
+
             using var conn = await OpenReadyConnectionAsync();
+
+            var (isMonthLocked, lockedByUser, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, workspace.EvalYear, workspace.EvalMonth);
+            if (isMonthLocked)
+            {
+                string lockMonthName = IncentiveCalculatorService.GetArabicMonthName(workspace.EvalMonth);
+                return (false, $"لا يمكن إدخال أو تعديل تقييم شهر ({lockMonthName} {workspace.EvalYear} م) لأنه معتمد ومغلق نهائياً بواسطة ({lockedByUser}).", 0);
+            }
 
             int activeTemplateCheck = await conn.ExecuteScalarAsync<int>(
                 "SELECT COUNT(1) FROM dbo.Templates WHERE TemplateID = @TID AND IsDeleted = 0",
@@ -605,7 +919,7 @@ namespace SchoolEvaluationERP.Services
                         {
                             var critCol = sheet.CriteriaColumns[c];
                             decimal effectiveScore = emp.GetEffectiveCriteriaScoreForSave(c);
-                            int? rawCount = workspace.IsCountBasedEvaluation ? emp.GetScoreAt(c) : (int?)null;
+                            int? rawCount = workspace.IsCountBasedEvaluation ? emp.GetNullableScoreAt(c) : (int?)null;
 
                             await conn.ExecuteAsync(insertScoreSql, new
                             {
@@ -632,6 +946,20 @@ namespace SchoolEvaluationERP.Services
                             }, tx);
                         }
                     }
+                }
+
+                if (!isNew)
+                {
+                    await conn.ExecuteAsync(@"
+                        DELETE FROM dbo.EvaluationEmployeeAdjustments
+                        WHERE RecordID = @RecordID
+                          AND NOT EXISTS (
+                              SELECT 1 FROM dbo.EvaluationScores es
+                              WHERE es.RecordID = dbo.EvaluationEmployeeAdjustments.RecordID
+                                AND es.SheetID = dbo.EvaluationEmployeeAdjustments.SheetID
+                                AND es.EmployeeID = dbo.EvaluationEmployeeAdjustments.EmployeeID
+                          );",
+                        new { RecordID = targetRecordId }, tx);
                 }
 
                 await tx.CommitAsync();
@@ -1215,4 +1543,13 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
+
+
+
+
 

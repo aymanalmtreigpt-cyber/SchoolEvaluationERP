@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -14,6 +14,8 @@ namespace SchoolEvaluationERP.Views
     {
         private readonly MasterDataService _service = new();
         private readonly EmployeeDto _editingEmployee;
+        private readonly int? _evalYear;
+        private readonly int? _evalMonth;
 
         private List<CategoryDto> _allCategories = new();
         private List<JobDto> _allJobs = new();
@@ -21,16 +23,26 @@ namespace SchoolEvaluationERP.Views
         private List<EmployeeEvaluatorGroupSection> _groupSections = new();
         private bool _isInitializing;
 
-        public EmployeeDialog(EmployeeDto? employeeToEdit = null)
+        public EmployeeDialog(EmployeeDto? employeeToEdit = null, int? evalYear = null, int? evalMonth = null)
         {
             _editingEmployee = employeeToEdit ?? new EmployeeDto();
+            _evalYear = evalYear;
+            _evalMonth = evalMonth;
             _isInitializing = true;
             InitializeComponent();
             _isInitializing = false;
 
+            string periodSuffix = (_evalYear.HasValue && _evalMonth.HasValue)
+                ? $" — [{IncentiveCalculatorService.GetArabicMonthName(_evalMonth.Value)} {_evalYear.Value} م]"
+                : string.Empty;
+
             if (_editingEmployee.EmployeeID > 0)
             {
-                TxtDialogTitle.Text = $"تعديل بيانات الموظف: {_editingEmployee.EvaluationName}";
+                TxtDialogTitle.Text = $"تعديل بيانات الموظف: {_editingEmployee.EvaluationName}{periodSuffix}";
+            }
+            else if (!string.IsNullOrEmpty(periodSuffix))
+            {
+                TxtDialogTitle.Text = $"إضافة موظف جديد وتخصيص مقيميه{periodSuffix}";
             }
 
             Loaded += async (_, _) =>
@@ -44,7 +56,7 @@ namespace SchoolEvaluationERP.Views
             _isInitializing = true;
 
             var branches = await _service.GetBranchesAsync();
-            _allCategories = await _service.GetCategoriesAsync();
+            _allCategories = await _service.GetCategoriesAsync(null, _evalYear, _evalMonth);
             _allJobs = await _service.GetJobsAsync();
             _allJobTypes = await _service.GetJobTypesAsync();
 
@@ -160,7 +172,7 @@ namespace SchoolEvaluationERP.Views
 
         private async Task LoadEvaluatorGroupsForCategoryAsync(int categoryId)
         {
-            _groupSections = await _service.GetCategoryGroupsForEmployeeDialogAsync(categoryId, _editingEmployee.EmployeeID);
+            _groupSections = await _service.GetCategoryGroupsForEmployeeDialogAsync(categoryId, _editingEmployee.EmployeeID, _evalYear, _evalMonth);
             foreach (var sec in _groupSections)
             {
                 sec.WireMemberNotifications(UpdateOverallCoverageBadge);
@@ -238,7 +250,7 @@ namespace SchoolEvaluationERP.Views
             };
 
             BtnSaveEmployee.IsEnabled = false;
-            var (isSuccess, message) = await _service.SaveEmployeeAsync(dto);
+            var (isSuccess, message) = await _service.SaveEmployeeAsync(dto, _evalYear, _evalMonth);
             BtnSaveEmployee.IsEnabled = true;
 
             if (!isSuccess)
@@ -259,3 +271,7 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+

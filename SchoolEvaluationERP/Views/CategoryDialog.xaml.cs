@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
@@ -15,17 +15,27 @@ namespace SchoolEvaluationERP.Views
     {
         private readonly MasterDataService _service = new();
         private readonly int _initialCategoryId;
+        private readonly int? _evalYear;
+        private readonly int? _evalMonth;
         private List<CategoryEvaluatorGroupSelectRow> _groupRows = new();
         private bool _isLoadingCategories;
 
         public bool HasSavedChanges { get; private set; }
 
-        public CategoryDialog(int initialCategoryId = 0)
+        public CategoryDialog(int initialCategoryId = 0, int? evalYear = null, int? evalMonth = null)
         {
             _initialCategoryId = initialCategoryId;
+            _evalYear = evalYear;
+            _evalMonth = evalMonth;
             _isLoadingCategories = true;
             InitializeComponent();
             _isLoadingCategories = false;
+
+            if (_evalYear.HasValue && _evalMonth.HasValue)
+            {
+                string mName = IncentiveCalculatorService.GetArabicMonthName(_evalMonth.Value);
+                Title = $"تخصيص المقيمين ودرجات التقييم للفئات (100 درجة) — شهر {mName} {_evalYear.Value} م";
+            }
 
             Loaded += async (_, _) =>
             {
@@ -36,7 +46,7 @@ namespace SchoolEvaluationERP.Views
         private async Task LoadCategoriesAsync(int selectCategoryId)
         {
             _isLoadingCategories = true;
-            var categories = await _service.GetCategoriesAsync();
+            var categories = await _service.GetCategoriesAsync(null, _evalYear, _evalMonth);
             GridCategoriesList.ItemsSource = categories;
             _isLoadingCategories = false;
 
@@ -66,7 +76,7 @@ namespace SchoolEvaluationERP.Views
 
             TxtSelectedCategoryTitle.Text = $"الفئة المحددة: {selectedCat.CategoryName}";
 
-            _groupRows = await _service.GetCategoryEvaluatorGroupMatrixAsync(selectedCat.CategoryID);
+            _groupRows = await _service.GetCategoryEvaluatorGroupMatrixAsync(selectedCat.CategoryID, _evalYear, _evalMonth);
             foreach (var row in _groupRows)
             {
                 row.PropertyChanged += GroupRow_PropertyChanged;
@@ -150,7 +160,7 @@ namespace SchoolEvaluationERP.Views
             GridEvaluatorGroups.CommitEdit(DataGridEditingUnit.Row, true);
 
             BtnSaveWeights.IsEnabled = false;
-            var (isSuccess, message) = await _service.SaveCategoryEvaluatorWeightsAsync(selectedCat.CategoryID, _groupRows);
+            var (isSuccess, message) = await _service.SaveCategoryEvaluatorWeightsAsync(selectedCat.CategoryID, _groupRows, _evalYear, _evalMonth);
             BtnSaveWeights.IsEnabled = true;
 
             if (!isSuccess)
@@ -171,3 +181,7 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+

@@ -31,9 +31,30 @@
                                 Click="BtnExportExcel_Click"/>
 
                         <Button x:Name="BtnExportPdf" Content="🖨 طباعة الكشف الرسمي A4 (PDF)"
-                                Style="{StaticResource SecondaryButton}" Height="35" Padding="14,0" Margin="0,0,0,4"
+                                Style="{StaticResource SecondaryButton}" Height="35" Padding="14,0" Margin="0,0,8,4"
                                 Click="BtnExportPdf_Click"/>
+
+                        <Button x:Name="BtnRebuildMonthConfig" Content="🛠 استرجاع أساسيات الشهر من التقييمات"
+                                Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,0,8,4"
+                                Background="#FEF3C7" BorderBrush="#F59E0B" Foreground="#92400E" FontWeight="Bold"
+                                ToolTip="استرجاع أوزان الفئات وإسناد الموظفين لهذا الشهر بدقة من اللقطات المحفوظة في تقييماته (لإنقاذ الشهور السابقة 7 و 8 و 9)"
+                                Click="BtnRebuildMonthConfig_Click"/>
+
+                        <Button x:Name="BtnLockMonth" Content="🔒 اعتماد وإغلاق الشهر نهائياً"
+                                Style="{StaticResource SecondaryButton}" Height="35" Padding="14,0" Margin="0,0,8,4"
+                                Background="#ECFDF5" BorderBrush="#10B981" Foreground="#065F46" FontWeight="Bold"
+                                ToolTip="تجميد القيد المحاسبي والأرقام وحماية هذا الشهر من أي تعديل مستقبلي"
+                                Click="BtnLockMonth_Click"/>
+
+                        <Button x:Name="BtnUnlockMonth" Content="🔓 فك إغلاق الشهر (مدير النظام)"
+                                Style="{StaticResource DangerButton}" Height="35" Padding="14,0" Margin="0,0,0,4"
+                                Visibility="Collapsed"
+                                Click="BtnUnlockMonth_Click"/>
                     </WrapPanel>
+
+                    <Border x:Name="BadgeReportPeriodStatus" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="6" Padding="10,5" Margin="0,4,0,0">
+                        <TextBlock x:Name="TxtReportPeriodStatus" Text="جاري قراءة حالة الفترة الشهرية..." FontSize="12" FontWeight="Bold" Foreground="#1E40AF" TextWrapping="Wrap"/>
+                    </Border>
                 </StackPanel>
 
                 <!-- 1: إعدادات الفترة والفلاتر وإعدادات القيد المحاسبي -->
@@ -175,4 +196,5 @@
         </Border>
     </Grid>
 </UserControl>
+
 

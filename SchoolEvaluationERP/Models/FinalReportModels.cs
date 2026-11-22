@@ -52,6 +52,10 @@ namespace SchoolEvaluationERP.Models
         public decimal MaxIncentiveAmount { get; set; }
         public decimal MinIncentiveAmount { get; set; }
         public bool RoundToNearest50 { get; set; }
+        public bool IsMonthLocked { get; set; }
+        public string LockedByUserName { get; set; } = string.Empty;
+        public DateTime? LockedAt { get; set; }
+        public string EffectiveConfigPeriodLabel { get; set; } = string.Empty;
 
         public List<EmployeeMonthlyReportRowDto> Rows { get; set; } = new();
 
@@ -61,4 +65,5 @@ namespace SchoolEvaluationERP.Models
         public decimal OverallAverageScore => Rows.Count == 0 ? 0m : Math.Round(Rows.Average(r => r.MonthlyEvaluationAverage), 2, MidpointRounding.AwayFromZero);
     }
 }
+
 

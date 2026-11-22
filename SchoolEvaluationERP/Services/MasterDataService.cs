@@ -252,26 +252,45 @@ namespace SchoolEvaluationERP.Services
         // =========================================================================
         // 3. إدارة الفئات (Categories)
         // =========================================================================
-        public async Task<List<CategoryDto>> GetCategoriesAsync(int? filterDepartmentId = null)
+        private static async Task<(int Year, int Month)> ResolvePeriodOrLatestAsync(
+            SqlConnection conn, int? evalYear, int? evalMonth, SqlTransaction? tx = null)
+        {
+            if (evalYear.HasValue && evalMonth.HasValue &&
+                evalYear.Value >= 2020 && evalYear.Value <= 2100 &&
+                evalMonth.Value >= 1 && evalMonth.Value <= 12)
+            {
+                return (evalYear.Value, evalMonth.Value);
+            }
+            return await MonthlyPeriodConfigService.GetLatestConfiguredPeriodAsync(conn, tx);
+        }
+
+        public async Task<List<CategoryDto>> GetCategoriesAsync(
+            int? filterDepartmentId = null,
+            int? evalYear = null,
+            int? evalMonth = null)
         {
             using var conn = await OpenReadyConnectionAsync();
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
             string sql = @"
                 SELECT c.CategoryID, ISNULL(c.DepartmentID, 0) AS DepartmentID, c.CategoryName,
                        (SELECT COUNT(1) FROM dbo.Jobs j WHERE j.CategoryID = c.CategoryID AND j.IsActive = 1) AS JobsCount,
                        (SELECT COUNT(1) FROM dbo.Employees e WHERE e.CategoryID = c.CategoryID AND e.IsActive = 1) AS EmployeesCount,
-                       ISNULL((SELECT SUM(ceg.WeightScore) FROM dbo.CategoryEvaluatorGroups ceg WHERE ceg.CategoryID = c.CategoryID), 0) AS TotalWeights
+                       CAST(0 AS DECIMAL(5,2)) AS TotalWeights
                 FROM dbo.Categories c
                 WHERE c.IsActive = 1
                 ORDER BY c.CategoryID ASC";
 
             var categories = (await conn.QueryAsync<CategoryDto>(sql)).ToList();
 
-            var groupLinks = await conn.QueryAsync<dynamic>(@"
-                SELECT ceg.CategoryID, eg.GroupID, eg.GroupName, ceg.WeightScore
-                FROM dbo.CategoryEvaluatorGroups ceg
-                INNER JOIN dbo.EvaluatorGroups eg ON ceg.GroupID = eg.GroupID
-                WHERE eg.IsActive = 1
-                ORDER BY ceg.WeightScore DESC");
+            var effectiveWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var effectiveSnaps = await MonthlyPeriodConfigService.GetEffectiveEmployeeSnapshotsAsync(conn, year, month);
+            var activeEmpIds = (await conn.QueryAsync<int>("SELECT EmployeeID FROM dbo.Employees WHERE IsActive = 1")).ToHashSet();
+
+            var empCountByCat = effectiveSnaps.Values
+                .Where(s => activeEmpIds.Contains(s.EmployeeID))
+                .GroupBy(s => s.CategoryID)
+                .ToDictionary(g => g.Key, g => g.Count());
 
             var groupMembers = await conn.QueryAsync<dynamic>(@"
                 SELECT GroupID, EvaluatorName
@@ -283,24 +302,33 @@ namespace SchoolEvaluationERP.Services
                 .GroupBy(x => (int)x.GroupID)
                 .ToDictionary(g => g.Key, g => string.Join("، ", g.Select(m => (string)m.EvaluatorName)));
 
-            var summaryByCat = groupLinks
-                .GroupBy(x => (int)x.CategoryID)
-                .ToDictionary(g => g.Key, g => string.Join("  |  ", g.Select(i =>
-                {
-                    int gId = (int)i.GroupID;
-                    string gName = (string)i.GroupName;
-                    decimal w = (decimal)i.WeightScore;
-                    membersByGroup.TryGetValue(gId, out var mems);
-                    return string.IsNullOrWhiteSpace(mems)
-                        ? $"{gName}: {w:0.##} درجة"
-                        : $"{gName} [{mems}]: {w:0.##} درجة";
-                })));
+            var weightsByCat = effectiveWeights
+                .GroupBy(x => x.CategoryID)
+                .ToDictionary(g => g.Key, g => g.ToList());
 
             foreach (var cat in categories)
             {
-                cat.EvaluatorsSummary = summaryByCat.TryGetValue(cat.CategoryID, out var sum)
-                    ? sum
-                    : "لم يتم تخصيص مقيمين بعد (اضغط تخصيص الدرجات)";
+                if (effectiveSnaps.Count > 0)
+                {
+                    cat.EmployeesCount = empCountByCat.TryGetValue(cat.CategoryID, out int cnt) ? cnt : 0;
+                }
+
+                if (weightsByCat.TryGetValue(cat.CategoryID, out var catW) && catW.Count > 0)
+                {
+                    cat.TotalWeights = catW.Sum(w => w.WeightScore);
+                    cat.EvaluatorsSummary = string.Join("  |  ", catW.Select(i =>
+                    {
+                        membersByGroup.TryGetValue(i.GroupID, out var mems);
+                        return string.IsNullOrWhiteSpace(mems)
+                            ? $"{i.GroupName}: {i.WeightScore:0.##} درجة"
+                            : $"{i.GroupName} [{mems}]: {i.WeightScore:0.##} درجة";
+                    }));
+                }
+                else
+                {
+                    cat.TotalWeights = 0m;
+                    cat.EvaluatorsSummary = "لم يتم تخصيص مقيمين بعد (اضغط تخصيص الدرجات)";
+                }
             }
 
             return categories;
@@ -740,18 +768,29 @@ namespace SchoolEvaluationERP.Services
             ");
         }
 
-        public async Task<List<EvaluatorGroupDto>> GetEvaluatorGroupsAsync()
+        public async Task<List<EvaluatorGroupDto>> GetEvaluatorGroupsAsync(int? evalYear = null, int? evalMonth = null)
         {
             using var conn = await OpenReadyConnectionAsync();
             await EnsureSystemGroupsActiveInDbAsync(conn);
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
 
             var groups = (await conn.QueryAsync<EvaluatorGroupDto>(@"
                 SELECT eg.GroupID, eg.GroupName, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup,
                        ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode, ISNULL(eg.MaxAllowedCount, 3) AS MaxAllowedCount,
-                       (SELECT COUNT(1) FROM dbo.CategoryEvaluatorGroups ceg WHERE ceg.GroupID = eg.GroupID) AS AssignedCategoriesCount
+                       0 AS AssignedCategoriesCount
                 FROM dbo.EvaluatorGroups eg
                 WHERE eg.IsActive = 1
                 ORDER BY eg.IsSystemGroup DESC, eg.GroupID ASC")).ToList();
+
+            var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var catsCountByGroup = effWeights
+                .GroupBy(w => w.GroupID)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.CategoryID).Distinct().Count());
+
+            foreach (var g in groups)
+            {
+                g.AssignedCategoriesCount = catsCountByGroup.TryGetValue(g.GroupID, out int cCnt) ? cCnt : 0;
+            }
 
             var evaluators = await GetEvaluatorsAsync();
             var evalByGroup = evaluators.GroupBy(e => e.GroupID).ToDictionary(g => g.Key, g => g.ToList());
@@ -960,20 +999,20 @@ namespace SchoolEvaluationERP.Services
         // =========================================================================
         // 7. تخصيص مجموعات المقيمين ودرجات التقييم للفئات (شرط المجموع = 100 درجة)
         // =========================================================================
-        public async Task<List<CategoryEvaluatorGroupSelectRow>> GetCategoryEvaluatorGroupMatrixAsync(int categoryId)
+        public async Task<List<CategoryEvaluatorGroupSelectRow>> GetCategoryEvaluatorGroupMatrixAsync(
+            int categoryId, int? evalYear = null, int? evalMonth = null)
         {
             using var conn = await OpenReadyConnectionAsync();
-            var groups = await GetEvaluatorGroupsAsync();
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+            var groups = await GetEvaluatorGroupsAsync(year, month);
             var existingWeights = new Dictionary<int, decimal>();
 
             if (categoryId > 0)
             {
-                var rows = await conn.QueryAsync<dynamic>(
-                    "SELECT GroupID, WeightScore FROM dbo.CategoryEvaluatorGroups WHERE CategoryID = @CatID",
-                    new { CatID = categoryId });
-                foreach (var r in rows)
+                var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+                foreach (var r in effWeights.Where(w => w.CategoryID == categoryId))
                 {
-                    existingWeights[(int)r.GroupID] = (decimal)r.WeightScore;
+                    existingWeights[r.GroupID] = r.WeightScore;
                 }
             }
 
@@ -994,7 +1033,9 @@ namespace SchoolEvaluationERP.Services
 
         public async Task<(bool IsSuccess, string Message)> SaveCategoryEvaluatorWeightsAsync(
             int categoryId,
-            List<CategoryEvaluatorGroupSelectRow> selectedGroups)
+            List<CategoryEvaluatorGroupSelectRow> selectedGroups,
+            int? evalYear = null,
+            int? evalMonth = null)
         {
             if (categoryId <= 0)
                 return (false, "يرجى اختيار الفئة المراد تخصيص درجات مقيميها.");
@@ -1014,56 +1055,80 @@ namespace SchoolEvaluationERP.Services
             }
 
             using var conn = await OpenReadyConnectionAsync();
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
+            var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
+            if (isLocked)
+            {
+                string lockPeriod = $"{IncentiveCalculatorService.GetArabicMonthName(month)} {year} م";
+                return (false, $"لا يمكن تعديل توزيع درجات شهر ({lockPeriod}) لأنه معتمد ومغلق نهائياً بواسطة ({lockedBy}).");
+            }
+
             using var tx = conn.BeginTransaction();
             try
             {
+                await MonthlyPeriodConfigService.EnsureMonthMaterializedAsync(conn, tx, year, month);
+
                 await conn.ExecuteAsync(
-                    "DELETE FROM dbo.CategoryEvaluatorGroups WHERE CategoryID = @CatID",
-                    new { CatID = categoryId }, tx);
+                    "DELETE FROM dbo.MonthlyCategoryEvaluatorGroups WHERE EvalYear = @Year AND EvalMonth = @Month AND CategoryID = @CatID",
+                    new { Year = year, Month = month, CatID = categoryId }, tx);
 
                 foreach (var row in activeRows)
                 {
                     await conn.ExecuteAsync(@"
-                        INSERT INTO dbo.CategoryEvaluatorGroups (CategoryID, GroupID, WeightScore)
-                        VALUES (@CatID, @GID, @Weight)",
-                        new { CatID = categoryId, GID = row.GroupID, Weight = row.WeightScore }, tx);
+                        INSERT INTO dbo.MonthlyCategoryEvaluatorGroups (EvalYear, EvalMonth, CategoryID, GroupID, WeightScore, UpdatedAt)
+                        VALUES (@Year, @Month, @CatID, @GID, @Weight, SYSDATETIME())",
+                        new { Year = year, Month = month, CatID = categoryId, GID = row.GroupID, Weight = row.WeightScore }, tx);
                 }
 
                 await conn.ExecuteAsync(@"
-                    DELETE ee
-                    FROM dbo.EmployeeEvaluators ee
-                    INNER JOIN dbo.Employees e ON ee.EmployeeID = e.EmployeeID
-                    INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
-                    WHERE e.CategoryID = @CatID
+                    DELETE mee
+                    FROM dbo.MonthlyEmployeeEvaluators mee
+                    INNER JOIN dbo.MonthlyEmployeeSnapshots mes
+                        ON mes.EmployeeID = mee.EmployeeID AND mes.EvalYear = mee.EvalYear AND mes.EvalMonth = mee.EvalMonth
+                    INNER JOIN dbo.Evaluators ev ON mee.EvaluatorID = ev.EvaluatorID
+                    WHERE mee.EvalYear = @Year AND mee.EvalMonth = @Month
+                      AND mes.CategoryID = @CatID
                       AND NOT EXISTS (
-                          SELECT 1 FROM dbo.CategoryEvaluatorGroups ceg
-                          WHERE ceg.CategoryID = @CatID AND ceg.GroupID = ev.GroupID
-                      );", new { CatID = categoryId }, tx);
+                          SELECT 1 FROM dbo.MonthlyCategoryEvaluatorGroups mceg
+                          WHERE mceg.EvalYear = @Year AND mceg.EvalMonth = @Month
+                            AND mceg.CategoryID = @CatID AND mceg.GroupID = ev.GroupID
+                      );", new { Year = year, Month = month, CatID = categoryId }, tx);
 
                 await conn.ExecuteAsync(@"
-                    INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID)
-                    SELECT e.EmployeeID, ev.EvaluatorID
-                    FROM dbo.Employees e
-                    INNER JOIN dbo.CategoryEvaluatorGroups ceg ON e.CategoryID = ceg.CategoryID
-                    INNER JOIN dbo.Evaluators ev ON ev.GroupID = ceg.GroupID AND ev.IsActive = 1
-                    WHERE e.CategoryID = @CatID
-                      AND (SELECT COUNT(1) FROM dbo.Evaluators ev2 WHERE ev2.GroupID = ceg.GroupID AND ev2.IsActive = 1) = 1
+                    INSERT INTO dbo.MonthlyEmployeeEvaluators (EvalYear, EvalMonth, EmployeeID, EvaluatorID, UpdatedAt)
+                    SELECT mes.EmployeeID, @Year, @Month, ev.EvaluatorID, SYSDATETIME()
+                    FROM dbo.MonthlyEmployeeSnapshots mes
+                    INNER JOIN dbo.MonthlyCategoryEvaluatorGroups mceg
+                        ON mes.CategoryID = mceg.CategoryID AND mceg.EvalYear = @Year AND mceg.EvalMonth = @Month
+                    INNER JOIN dbo.Evaluators ev ON ev.GroupID = mceg.GroupID AND ev.IsActive = 1
+                    WHERE mes.EvalYear = @Year AND mes.EvalMonth = @Month
+                      AND mes.CategoryID = @CatID
+                      AND (SELECT COUNT(1) FROM dbo.Evaluators ev2 WHERE ev2.GroupID = mceg.GroupID AND ev2.IsActive = 1) = 1
                       AND NOT EXISTS (
-                          SELECT 1 FROM dbo.EmployeeEvaluators ee
-                          WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = ev.EvaluatorID
-                      );", new { CatID = categoryId }, tx);
+                          SELECT 1 FROM dbo.MonthlyEmployeeEvaluators mee
+                          WHERE mee.EvalYear = @Year AND mee.EvalMonth = @Month
+                            AND mee.EmployeeID = mes.EmployeeID AND mee.EvaluatorID = ev.EvaluatorID
+                      );", new { Year = year, Month = month, CatID = categoryId }, tx);
 
+                var (latestY, latestM) = await MonthlyPeriodConfigService.GetLatestConfiguredPeriodAsync(conn, tx);
+                bool isLatest = (year * 100 + month) >= (latestY * 100 + latestM);
+
+                await MonthlyPeriodConfigService.SyncLiveTablesIfLatestPeriodAsync(conn, tx, year, month);
                 await tx.CommitAsync();
 
-                // التوليد التلقائي لقوالب مجموعات النظام (الغياب والتأخير) لضمان اندماج موظفي الفئة المضافة تلقائياً في ورقة العمل الشاملة
-                var systemGroups = (await conn.QueryAsync<int>("SELECT GroupID FROM dbo.EvaluatorGroups WHERE IsSystemGroup = 1 AND IsActive = 1")).ToList();
-                var templateSvc = new TemplateService(_connectionString);
-                foreach (int sysGroupId in systemGroups)
+                if (isLatest)
                 {
-                    await templateSvc.EnsureSystemGroupTemplateAsync(sysGroupId, conn);
+                    var systemGroups = (await conn.QueryAsync<int>("SELECT GroupID FROM dbo.EvaluatorGroups WHERE IsSystemGroup = 1 AND IsActive = 1")).ToList();
+                    var templateSvc = new TemplateService(_connectionString);
+                    foreach (int sysGroupId in systemGroups)
+                    {
+                        await templateSvc.EnsureSystemGroupTemplateAsync(sysGroupId, conn);
+                    }
                 }
 
-                return (true, "تم اعتماد تخصيص المقيمين وتوزيع الـ 100 درجة للفئة بنجاح، وتحديث قوالب الغياب والتأخير التلقائية.");
+                string periodLabel = $"{IncentiveCalculatorService.GetArabicMonthName(month)} {year} م";
+                return (true, $"تم اعتماد تخصيص المقيمين وتوزيع الـ 100 درجة للفئة في شهر ({periodLabel}) بنجاح دون التأثير على الشهور السابقة.");
             }
             catch (Exception ex)
             {
@@ -1075,42 +1140,43 @@ namespace SchoolEvaluationERP.Services
         // =========================================================================
         // 8. إدارة الموظفين + تحديد المقيمين المسؤولين + استيراد وتصدير Excel
         // =========================================================================
-        public async Task<List<EmployeeEvaluatorGroupSection>> GetCategoryGroupsForEmployeeDialogAsync(int categoryId, int employeeId = 0)
+        public async Task<List<EmployeeEvaluatorGroupSection>> GetCategoryGroupsForEmployeeDialogAsync(
+            int categoryId, int employeeId = 0, int? evalYear = null, int? evalMonth = null)
         {
             using var conn = await OpenReadyConnectionAsync();
             if (categoryId <= 0) return new List<EmployeeEvaluatorGroupSection>();
 
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
             var assignedEvalIds = new HashSet<int>();
             if (employeeId > 0)
             {
-                var ids = await conn.QueryAsync<int>(
-                    "SELECT EvaluatorID FROM dbo.EmployeeEvaluators WHERE EmployeeID = @EmpID",
-                    new { EmpID = employeeId });
-                assignedEvalIds = ids.ToHashSet();
+                var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+                assignedEvalIds = effAssigns.Where(a => a.EmployeeID == employeeId).Select(a => a.EvaluatorID).ToHashSet();
             }
 
-            var catGroups = (await conn.QueryAsync<dynamic>(@"
-                SELECT ceg.GroupID, eg.GroupName, ceg.WeightScore
-                FROM dbo.CategoryEvaluatorGroups ceg
-                INNER JOIN dbo.EvaluatorGroups eg ON ceg.GroupID = eg.GroupID
-                WHERE ceg.CategoryID = @CatID AND eg.IsActive = 1
-                ORDER BY ceg.WeightScore DESC, eg.GroupID ASC",
-                new { CatID = categoryId })).ToList();
+            var catGroups = (await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month))
+                .Where(w => w.CategoryID == categoryId)
+                .OrderByDescending(w => w.WeightScore)
+                .ThenBy(w => w.GroupID)
+                .ToList();
+
+            var groupIds = catGroups.Select(g => g.GroupID).Distinct().ToList();
+            if (groupIds.Count == 0) return new List<EmployeeEvaluatorGroupSection>();
 
             var evaluators = (await conn.QueryAsync<EvaluatorDto>(@"
                 SELECT ev.EvaluatorID, ev.GroupID, ev.EvaluatorName
                 FROM dbo.Evaluators ev
-                INNER JOIN dbo.CategoryEvaluatorGroups ceg ON ev.GroupID = ceg.GroupID
-                WHERE ceg.CategoryID = @CatID AND ev.IsActive = 1
+                WHERE ev.GroupID IN @GroupIds AND ev.IsActive = 1
                 ORDER BY ev.EvaluatorID ASC",
-                new { CatID = categoryId })).ToList();
+                new { GroupIds = groupIds })).ToList();
 
             var evalByGroup = evaluators.GroupBy(e => e.GroupID).ToDictionary(g => g.Key, g => g.ToList());
             var sections = new List<EmployeeEvaluatorGroupSection>();
 
             foreach (var cg in catGroups)
             {
-                int gId = (int)cg.GroupID;
+                int gId = cg.GroupID;
                 evalByGroup.TryGetValue(gId, out var mems);
                 mems ??= new List<EvaluatorDto>();
 
@@ -1118,8 +1184,8 @@ namespace SchoolEvaluationERP.Services
                 var section = new EmployeeEvaluatorGroupSection
                 {
                     GroupID = gId,
-                    GroupName = (string)cg.GroupName,
-                    GroupWeight = (decimal)cg.WeightScore
+                    GroupName = cg.GroupName,
+                    GroupWeight = cg.WeightScore
                 };
 
                 foreach (var m in mems)
@@ -1145,9 +1211,12 @@ namespace SchoolEvaluationERP.Services
             string search = "",
             int? branchId = null,
             int? categoryId = null,
-            string statusFilter = "ALL")
+            string statusFilter = "ALL",
+            int? evalYear = null,
+            int? evalMonth = null)
         {
             using var conn = await OpenReadyConnectionAsync();
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
 
             string sql = @"
                 SELECT e.EmployeeID, e.SystemName, e.EvaluationName,
@@ -1165,16 +1234,33 @@ namespace SchoolEvaluationERP.Services
                 WHERE e.IsActive = 1
                   AND (@Search = '' OR e.SystemName LIKE @Pattern OR e.EvaluationName LIKE @Pattern OR j.JobTitle LIKE @Pattern OR jt.JobTypeName LIKE @Pattern)
                   AND (@BranchID IS NULL OR e.BranchID = @BranchID)
-                  AND (@CategoryID IS NULL OR e.CategoryID = @CategoryID)
                 ORDER BY b.BranchName ASC, e.EvaluationName ASC";
 
             var employees = (await conn.QueryAsync<EmployeeDto>(sql, new
             {
                 Search = (search ?? string.Empty).Trim(),
                 Pattern = $"%{(search ?? string.Empty).Trim()}%",
-                BranchID = branchId,
-                CategoryID = categoryId
+                BranchID = branchId
             })).ToList();
+
+            var catNameById = (await conn.QueryAsync<dynamic>("SELECT CategoryID, CategoryName FROM dbo.Categories"))
+                .ToDictionary(x => (int)x.CategoryID, x => (string)x.CategoryName);
+
+            var snaps = await MonthlyPeriodConfigService.GetEffectiveEmployeeSnapshotsAsync(conn, year, month);
+            foreach (var emp in employees)
+            {
+                if (snaps.TryGetValue(emp.EmployeeID, out var snap))
+                {
+                    emp.CategoryID = snap.CategoryID;
+                    if (catNameById.TryGetValue(snap.CategoryID, out var cname))
+                        emp.CategoryName = cname;
+                    emp.HasIncentive = snap.HasIncentive;
+                    emp.IsContinuing = snap.IsContinuing;
+                }
+            }
+
+            if (categoryId.HasValue && categoryId.Value > 0)
+                employees = employees.Where(e => e.CategoryID == categoryId.Value).ToList();
 
             if (statusFilter == "CONT_INC")
                 employees = employees.Where(e => e.IsContinuing && e.HasIncentive).ToList();
@@ -1183,42 +1269,37 @@ namespace SchoolEvaluationERP.Services
             else if (statusFilter == "DISCONT")
                 employees = employees.Where(e => !e.IsContinuing).ToList();
 
-            var catGroups = (await conn.QueryAsync<dynamic>(@"
-                SELECT ceg.CategoryID, ceg.GroupID, eg.GroupName, ceg.WeightScore
-                FROM dbo.CategoryEvaluatorGroups ceg
-                INNER JOIN dbo.EvaluatorGroups eg ON ceg.GroupID = eg.GroupID
-                WHERE eg.IsActive = 1")).ToList();
-
+            var catGroups = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
             var catGroupsMap = catGroups
-                .GroupBy(x => (int)x.CategoryID)
+                .GroupBy(x => x.CategoryID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            var empEvals = (await conn.QueryAsync<dynamic>(@"
-                SELECT ee.EmployeeID, ee.EvaluatorID, ev.GroupID, ev.EvaluatorName
-                FROM dbo.EmployeeEvaluators ee
-                INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
-                WHERE ev.IsActive = 1")).ToList();
-
+            var empEvals = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
             var empEvalMap = empEvals
-                .GroupBy(x => (int)x.EmployeeID)
+                .GroupBy(x => x.EmployeeID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            var empInTemplates = (await conn.QueryAsync<dynamic>(@"
-                SELECT DISTINCT se.EmployeeID, t.EvaluatorID
-                FROM dbo.SheetEmployees se
-                INNER JOIN dbo.TemplateSheets ts ON se.SheetID = ts.SheetID
-                INNER JOIN dbo.Templates t ON ts.TemplateID = t.TemplateID
+            var activeTemplateSheets = (await conn.QueryAsync<dynamic>(@"
+                SELECT t.EvaluatorID, ts.TargetCategoryID, ts.TargetBranchID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                FROM dbo.Templates t
+                INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                INNER JOIN dbo.TemplateSheets ts ON ts.TemplateID = t.TemplateID
                 WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0")).ToList();
 
-            var empTemplateMap = empInTemplates
-                .GroupBy(x => (int)x.EmployeeID)
-                .ToDictionary(g => g.Key, g => g.Select(i => (int)i.EvaluatorID).ToHashSet());
+            var empExcludedFromTemplate = (await conn.QueryAsync<dynamic>(
+                "SELECT EvaluatorID, EmployeeID FROM dbo.TemplateExcludedEmployees"))
+                .Select(x => ((int)x.EvaluatorID, (int)x.EmployeeID)).ToHashSet();
+
+            var activeTemplatesByEval = activeTemplateSheets
+                .GroupBy(x => (int)x.EvaluatorID)
+                .ToDictionary(g => g.Key, g => g.ToList());
 
             foreach (var emp in employees)
             {
                 empEvalMap.TryGetValue(emp.EmployeeID, out var assignedRows);
-                assignedRows ??= new List<dynamic>();
-                emp.SelectedEvaluatorIds = assignedRows.Select(r => (int)r.EvaluatorID).ToList();
+                assignedRows ??= new List<EffectiveEmployeeAssignmentDto>();
+                emp.SelectedEvaluatorIds = assignedRows.Select(r => r.EvaluatorID).ToList();
 
                 if (!catGroupsMap.TryGetValue(emp.CategoryID, out var reqGroups) || reqGroups.Count == 0)
                 {
@@ -1234,11 +1315,11 @@ namespace SchoolEvaluationERP.Services
 
                 foreach (var grp in reqGroups)
                 {
-                    int gId = (int)grp.GroupID;
-                    string gName = (string)grp.GroupName;
-                    decimal gWeight = (decimal)grp.WeightScore;
+                    int gId = grp.GroupID;
+                    string gName = grp.GroupName;
+                    decimal gWeight = grp.WeightScore;
 
-                    var chosenInGrp = assignedRows.Where(r => (int)r.GroupID == gId).ToList();
+                    var chosenInGrp = assignedRows.Where(r => r.GroupID == gId).ToList();
                     if (chosenInGrp.Count == 0)
                     {
                         anyUncoveredGroup = true;
@@ -1249,7 +1330,7 @@ namespace SchoolEvaluationERP.Services
                         decimal share = Math.Round(gWeight / chosenInGrp.Count, 2, MidpointRounding.AwayFromZero);
                         foreach (var ch in chosenInGrp)
                         {
-                            requiredEvalList.Add(((int)ch.EvaluatorID, (string)ch.EvaluatorName));
+                            requiredEvalList.Add((ch.EvaluatorID, ch.EvaluatorName));
                         }
                         string names = string.Join("، ", chosenInGrp.Select(c => $"{c.EvaluatorName} ({share:0.##})"));
                         summaryParts.Add(names);
@@ -1272,16 +1353,31 @@ namespace SchoolEvaluationERP.Services
                     continue;
                 }
 
-                empTemplateMap.TryGetValue(emp.EmployeeID, out var coveredEvalIds);
-                coveredEvalIds ??= new HashSet<int>();
+                var missingNames = new List<string>();
+                foreach (var req in requiredEvalList)
+                {
+                    if (empExcludedFromTemplate.Contains((req.EvalId, emp.EmployeeID)))
+                        continue;
 
-                var missingNames = requiredEvalList
-                    .Where(r => !coveredEvalIds.Contains(r.EvalId))
-                    .Select(r => r.EvalName)
-                    .Distinct()
-                    .ToList();
+                    if (!activeTemplatesByEval.TryGetValue(req.EvalId, out var sheetsForEval))
+                    {
+                        missingNames.Add(req.EvalName);
+                        continue;
+                    }
 
-                if (missingNames.Count == 0 && requiredEvalList.Count > 0)
+                    bool hasMatchingSheet = sheetsForEval.Any(sh =>
+                        Convert.ToBoolean(sh.IsSystemGroup) ||
+                        ((int)sh.TargetCategoryID == emp.CategoryID &&
+                         (sh.TargetBranchID == null || (int)sh.TargetBranchID == emp.BranchID)));
+
+                    if (!hasMatchingSheet)
+                    {
+                        missingNames.Add(req.EvalName);
+                    }
+                }
+
+                var distinctMissing = missingNames.Distinct().ToList();
+                if (distinctMissing.Count == 0 && requiredEvalList.Count > 0)
                 {
                     emp.IsCoverageComplete = true;
                     emp.TemplateCoverageStatus = "مكتمل في القوالب ✔";
@@ -1289,14 +1385,15 @@ namespace SchoolEvaluationERP.Services
                 else
                 {
                     emp.IsCoverageComplete = false;
-                    emp.TemplateCoverageStatus = $"ينقصه قالب: {string.Join("، ", missingNames)} ⚠";
+                    emp.TemplateCoverageStatus = $"ينقصه ورقة قالب: {string.Join("، ", distinctMissing)} ⚠";
                 }
             }
 
             return employees;
         }
 
-        public async Task<(bool IsSuccess, string Message)> SaveEmployeeAsync(EmployeeDto dto)
+        public async Task<(bool IsSuccess, string Message)> SaveEmployeeAsync(
+            EmployeeDto dto, int? evalYear = null, int? evalMonth = null)
         {
             string sysName = (dto.SystemName ?? string.Empty).Trim();
             string evalName = (dto.EvaluationName ?? string.Empty).Trim();
@@ -1317,6 +1414,14 @@ namespace SchoolEvaluationERP.Services
                 return (false, permErr);
 
             using var conn = await OpenReadyConnectionAsync();
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
+            var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
+            if (isLocked)
+            {
+                string lockPeriod = $"{IncentiveCalculatorService.GetArabicMonthName(month)} {year} م";
+                return (false, $"لا يمكن تعديل إسناد وحالة الموظف في شهر ({lockPeriod}) لأنه معتمد ومغلق نهائياً بواسطة ({lockedBy}).");
+            }
 
             int dupSys = await conn.ExecuteScalarAsync<int>(
                 "SELECT COUNT(1) FROM dbo.Employees WHERE SystemName = @Sys AND EmployeeID <> @ID",
@@ -1330,34 +1435,31 @@ namespace SchoolEvaluationERP.Services
             if (dupEval > 0)
                 return (false, $"الاسم التقييمي ({evalName}) مسجل لموظف آخر بالفعل.");
 
-            // التحقق من اكتمال تخصيص الـ 100 درجة للفئة واختيار مقيم واحد على الأقل من كل مجموعة مخصصة
-            var catGroups = (await conn.QueryAsync<dynamic>(@"
-                SELECT ceg.GroupID, eg.GroupName, ceg.WeightScore
-                FROM dbo.CategoryEvaluatorGroups ceg
-                INNER JOIN dbo.EvaluatorGroups eg ON ceg.GroupID = eg.GroupID
-                WHERE ceg.CategoryID = @CatID AND eg.IsActive = 1",
-                new { CatID = dto.CategoryID })).ToList();
+            var catGroups = (await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month))
+                .Where(w => w.CategoryID == dto.CategoryID)
+                .ToList();
 
-            decimal totalCatWeights = catGroups.Sum(x => (decimal)x.WeightScore);
+            decimal totalCatWeights = catGroups.Sum(x => x.WeightScore);
             if (catGroups.Count == 0 || totalCatWeights != 100m)
             {
-                return (false, "يرجى أولاً تخصيص مجموعات المقيمين ودرجات التقييم (100 درجة) لهذه الفئة من تبويب (تخصيص المقيمين ودرجات الفئات) قبل حفظ الموظف.");
+                string periodLabel = $"{IncentiveCalculatorService.GetArabicMonthName(month)} {year} م";
+                return (false, $"يرجى أولاً تخصيص مجموعات المقيمين ودرجات التقييم (100 درجة) لهذه الفئة في شهر ({periodLabel}) قبل حفظ الموظف.");
             }
 
+            var groupIds = catGroups.Select(g => g.GroupID).Distinct().ToList();
             var activeGroupEvaluators = (await conn.QueryAsync<EvaluatorDto>(@"
                 SELECT ev.EvaluatorID, ev.GroupID, ev.EvaluatorName
                 FROM dbo.Evaluators ev
-                INNER JOIN dbo.CategoryEvaluatorGroups ceg ON ev.GroupID = ceg.GroupID
-                WHERE ceg.CategoryID = @CatID AND ev.IsActive = 1",
-                new { CatID = dto.CategoryID })).ToList();
+                WHERE ev.GroupID IN @GroupIds AND ev.IsActive = 1",
+                new { GroupIds = groupIds })).ToList();
 
             var selectedSet = (dto.SelectedEvaluatorIds ?? new List<int>()).ToHashSet();
             var finalEvaluatorIds = new HashSet<int>();
 
             foreach (var grp in catGroups)
             {
-                int gId = (int)grp.GroupID;
-                string gName = (string)grp.GroupName;
+                int gId = grp.GroupID;
+                string gName = grp.GroupName;
                 var mems = activeGroupEvaluators.Where(e => e.GroupID == gId).ToList();
 
                 if (mems.Count == 1)
@@ -1381,6 +1483,10 @@ namespace SchoolEvaluationERP.Services
             using var tx = conn.BeginTransaction();
             try
             {
+                await MonthlyPeriodConfigService.EnsureMonthMaterializedAsync(conn, tx, year, month);
+                var (latestY, latestM) = await MonthlyPeriodConfigService.GetLatestConfiguredPeriodAsync(conn, tx);
+                bool isLatest = (year * 100 + month) >= (latestY * 100 + latestM);
+
                 int targetEmpId = dto.EmployeeID;
                 if (targetEmpId == 0)
                 {
@@ -1405,46 +1511,93 @@ namespace SchoolEvaluationERP.Services
                 }
                 else
                 {
-                    string updateSql = @"
-                        UPDATE dbo.Employees
-                        SET SystemName = @Sys,
-                            EvaluationName = @Eval,
-                            BranchID = @BranchID,
-                            CategoryID = @CatID,
-                            JobID = @JobID,
-                            JobTypeID = @JobTypeID,
-                            HasIncentive = @HasInc,
-                            IsContinuing = @IsCont
-                        WHERE EmployeeID = @ID";
-
-                    await conn.ExecuteAsync(updateSql, new
+                    if (isLatest)
                     {
-                        Sys = sysName,
-                        Eval = evalName,
-                        dto.BranchID,
+                        await conn.ExecuteAsync(@"
+                            UPDATE dbo.Employees
+                            SET SystemName = @Sys,
+                                EvaluationName = @Eval,
+                                BranchID = @BranchID,
+                                CategoryID = @CatID,
+                                JobID = @JobID,
+                                JobTypeID = @JobTypeID,
+                                HasIncentive = @HasInc,
+                                IsContinuing = @IsCont
+                            WHERE EmployeeID = @ID", new
+                        {
+                            Sys = sysName,
+                            Eval = evalName,
+                            dto.BranchID,
+                            CatID = dto.CategoryID,
+                            dto.JobID,
+                            dto.JobTypeID,
+                            HasInc = dto.HasIncentive,
+                            IsCont = dto.IsContinuing,
+                            ID = targetEmpId
+                        }, tx);
+                    }
+                    else
+                    {
+                        await conn.ExecuteAsync(@"
+                            UPDATE dbo.Employees
+                            SET SystemName = @Sys,
+                                EvaluationName = @Eval,
+                                BranchID = @BranchID,
+                                JobID = @JobID,
+                                JobTypeID = @JobTypeID
+                            WHERE EmployeeID = @ID", new
+                        {
+                            Sys = sysName,
+                            Eval = evalName,
+                            dto.BranchID,
+                            dto.JobID,
+                            dto.JobTypeID,
+                            ID = targetEmpId
+                        }, tx);
+                    }
+                }
+
+                await conn.ExecuteAsync(@"
+                    IF EXISTS (SELECT 1 FROM dbo.MonthlyEmployeeSnapshots WHERE EvalYear = @Year AND EvalMonth = @Month AND EmployeeID = @EmpID)
+                    BEGIN
+                        UPDATE dbo.MonthlyEmployeeSnapshots
+                        SET CategoryID = @CatID, HasIncentive = @HasInc, IsContinuing = @IsCont, UpdatedAt = SYSDATETIME()
+                        WHERE EvalYear = @Year AND EvalMonth = @Month AND EmployeeID = @EmpID;
+                    END
+                    ELSE
+                    BEGIN
+                        INSERT INTO dbo.MonthlyEmployeeSnapshots (EvalYear, EvalMonth, EmployeeID, CategoryID, HasIncentive, IsContinuing, UpdatedAt)
+                        VALUES (@Year, @Month, @EmpID, @CatID, @HasInc, @IsCont, SYSDATETIME());
+                    END",
+                    new
+                    {
+                        Year = year,
+                        Month = month,
+                        EmpID = targetEmpId,
                         CatID = dto.CategoryID,
-                        dto.JobID,
-                        dto.JobTypeID,
                         HasInc = dto.HasIncentive,
-                        IsCont = dto.IsContinuing,
-                        ID = targetEmpId
+                        IsCont = dto.IsContinuing
                     }, tx);
 
-                    await conn.ExecuteAsync("DELETE FROM dbo.EmployeeEvaluators WHERE EmployeeID = @ID", new { ID = targetEmpId }, tx);
-                }
+                await conn.ExecuteAsync(
+                    "DELETE FROM dbo.MonthlyEmployeeEvaluators WHERE EvalYear = @Year AND EvalMonth = @Month AND EmployeeID = @EmpID",
+                    new { Year = year, Month = month, EmpID = targetEmpId }, tx);
 
                 foreach (int evalId in finalEvaluatorIds)
                 {
                     await conn.ExecuteAsync(@"
-                        INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID)
-                        VALUES (@EmpID, @EvalID)",
-                        new { EmpID = targetEmpId, EvalID = evalId }, tx);
+                        INSERT INTO dbo.MonthlyEmployeeEvaluators (EvalYear, EvalMonth, EmployeeID, EvaluatorID, UpdatedAt)
+                        VALUES (@Year, @Month, @EmpID, @EvalID, SYSDATETIME())",
+                        new { Year = year, Month = month, EmpID = targetEmpId, EvalID = evalId }, tx);
                 }
 
+                await MonthlyPeriodConfigService.SyncLiveTablesIfLatestPeriodAsync(conn, tx, year, month);
                 await tx.CommitAsync();
+
+                string pLabel = $"{IncentiveCalculatorService.GetArabicMonthName(month)} {year} م";
                 return (true, dto.EmployeeID == 0
-                    ? "تمت إضافة الموظف وربطه بالمقيمين المسؤولين عنه (100 درجة) بنجاح."
-                    : "تم تحديث بيانات الموظف ومقيميه بنجاح.");
+                    ? $"تمت إضافة الموظف وربطه بالمقيمين المسؤولين عنه لشهر ({pLabel}) بنجاح."
+                    : $"تم تحديث بيانات الموظف ومقيميه لشهر ({pLabel}) بنجاح دون التأثير على الشهور السابقة.");
             }
             catch (Exception ex)
             {
@@ -1661,10 +1814,10 @@ namespace SchoolEvaluationERP.Services
             return rows;
         }
 
-        public async Task GenerateEvaluatorsExcelTemplateAsync(string filePath)
+        public async Task GenerateEvaluatorsExcelTemplateAsync(string filePath, int? evalYear = null, int? evalMonth = null)
         {
-            var evalGroups = (await GetEvaluatorGroupsAsync()).Where(g => g.Members.Count > 0).ToList();
-            var categories = await GetCategoriesAsync();
+            var evalGroups = (await GetEvaluatorGroupsAsync(evalYear, evalMonth)).Where(g => g.Members.Count > 0).ToList();
+            var categories = await GetCategoriesAsync(null, evalYear, evalMonth);
 
             using var wb = new XLWorkbook();
             var ws = wb.Worksheets.Add("بيانات المقيمين وأوزان الفئات");
@@ -1825,7 +1978,7 @@ namespace SchoolEvaluationERP.Services
             wb.SaveAs(filePath);
         }
 
-        public async Task<(bool IsSuccess, string SummaryMessage)> ImportEvaluatorsAndWeightsFromExcelAsync(string filePath)
+        public async Task<(bool IsSuccess, string SummaryMessage)> ImportEvaluatorsAndWeightsFromExcelAsync(string filePath, int? evalYear = null, int? evalMonth = null)
         {
             if (!CheckPermission("insert", out string permErr) && !CheckPermission("update", out permErr))
                 return (false, permErr);
@@ -1989,6 +2142,16 @@ namespace SchoolEvaluationERP.Services
                         "SELECT CategoryID, ISNULL(DepartmentID, 0) AS DepartmentID, CategoryName FROM dbo.Categories",
                         transaction: tx)).ToList();
 
+                    var (targetYear, targetMonth) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth, tx);
+                    var (isMonthLocked, lockedByUser, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, targetYear, targetMonth, tx);
+                    if (isMonthLocked)
+                    {
+                        await tx.RollbackAsync();
+                        string lockLbl = $"{IncentiveCalculatorService.GetArabicMonthName(targetMonth)} {targetYear} م";
+                        return (false, $"لا يمكن استيراد أوزان الفئات لشهر ({lockLbl}) لأنه معتمد ومغلق نهائياً بواسطة ({lockedByUser}).");
+                    }
+                    await MonthlyPeriodConfigService.EnsureMonthMaterializedAsync(conn, tx, targetYear, targetMonth);
+
                     for (int r = 3; r <= totalRows; r++)
                     {
                         string catName = grid[r, 1].Trim();
@@ -2047,49 +2210,55 @@ namespace SchoolEvaluationERP.Services
                         }
 
                         await conn.ExecuteAsync(
-                            "DELETE FROM dbo.CategoryEvaluatorGroups WHERE CategoryID = @CatID",
-                            new { CatID = matchedCat.CategoryID }, tx);
+                            "DELETE FROM dbo.MonthlyCategoryEvaluatorGroups WHERE EvalYear = @Year AND EvalMonth = @Month AND CategoryID = @CatID",
+                            new { Year = targetYear, Month = targetMonth, CatID = matchedCat.CategoryID }, tx);
 
                         foreach (var cw in catWeights)
                         {
                             await conn.ExecuteAsync(@"
-                                INSERT INTO dbo.CategoryEvaluatorGroups (CategoryID, GroupID, WeightScore)
-                                VALUES (@CatID, @GID, @Weight)",
-                                new { CatID = matchedCat.CategoryID, GID = cw.GroupID, cw.Weight }, tx);
+                                INSERT INTO dbo.MonthlyCategoryEvaluatorGroups (EvalYear, EvalMonth, CategoryID, GroupID, WeightScore, UpdatedAt)
+                                VALUES (@Year, @Month, @CatID, @GID, @Weight, SYSDATETIME())",
+                                new { Year = targetYear, Month = targetMonth, CatID = matchedCat.CategoryID, GID = cw.GroupID, cw.Weight }, tx);
                         }
 
-                        // إزالة ربط الموظفين بالمجموعات التي أصبحت درجتها 0 لهذه الفئة
                         await conn.ExecuteAsync(@"
-                            DELETE ee
-                            FROM dbo.EmployeeEvaluators ee
-                            INNER JOIN dbo.Employees e ON ee.EmployeeID = e.EmployeeID
-                            INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
-                            WHERE e.CategoryID = @CatID
+                            DELETE mee
+                            FROM dbo.MonthlyEmployeeEvaluators mee
+                            INNER JOIN dbo.MonthlyEmployeeSnapshots mes
+                                ON mes.EmployeeID = mee.EmployeeID AND mes.EvalYear = mee.EvalYear AND mes.EvalMonth = mee.EvalMonth
+                            INNER JOIN dbo.Evaluators ev ON mee.EvaluatorID = ev.EvaluatorID
+                            WHERE mee.EvalYear = @Year AND mee.EvalMonth = @Month
+                              AND mes.CategoryID = @CatID
                               AND NOT EXISTS (
-                                  SELECT 1 FROM dbo.CategoryEvaluatorGroups ceg
-                                  WHERE ceg.CategoryID = @CatID AND ceg.GroupID = ev.GroupID
-                              );", new { CatID = matchedCat.CategoryID }, tx);
+                                  SELECT 1 FROM dbo.MonthlyCategoryEvaluatorGroups mceg
+                                  WHERE mceg.EvalYear = @Year AND mceg.EvalMonth = @Month
+                                    AND mceg.CategoryID = @CatID AND mceg.GroupID = ev.GroupID
+                              );", new { Year = targetYear, Month = targetMonth, CatID = matchedCat.CategoryID }, tx);
 
-                        // إسناد تلقائي لأي مجموعة تتكون من مقيم واحد فقط
                         await conn.ExecuteAsync(@"
-                            INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID)
-                            SELECT e.EmployeeID, ev.EvaluatorID
-                            FROM dbo.Employees e
-                            INNER JOIN dbo.CategoryEvaluatorGroups ceg ON e.CategoryID = ceg.CategoryID
-                            INNER JOIN dbo.Evaluators ev ON ev.GroupID = ceg.GroupID AND ev.IsActive = 1
-                            WHERE e.CategoryID = @CatID
-                              AND (SELECT COUNT(1) FROM dbo.Evaluators ev2 WHERE ev2.GroupID = ceg.GroupID AND ev2.IsActive = 1) = 1
+                            INSERT INTO dbo.MonthlyEmployeeEvaluators (EvalYear, EvalMonth, EmployeeID, EvaluatorID, UpdatedAt)
+                            SELECT mes.EmployeeID, @Year, @Month, ev.EvaluatorID, SYSDATETIME()
+                            FROM dbo.MonthlyEmployeeSnapshots mes
+                            INNER JOIN dbo.MonthlyCategoryEvaluatorGroups mceg
+                                ON mes.CategoryID = mceg.CategoryID AND mceg.EvalYear = @Year AND mceg.EvalMonth = @Month
+                            INNER JOIN dbo.Evaluators ev ON ev.GroupID = mceg.GroupID AND ev.IsActive = 1
+                            WHERE mes.EvalYear = @Year AND mes.EvalMonth = @Month
+                              AND mes.CategoryID = @CatID
+                              AND (SELECT COUNT(1) FROM dbo.Evaluators ev2 WHERE ev2.GroupID = mceg.GroupID AND ev2.IsActive = 1) = 1
                               AND NOT EXISTS (
-                                  SELECT 1 FROM dbo.EmployeeEvaluators ee
-                                  WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = ev.EvaluatorID
-                              );", new { CatID = matchedCat.CategoryID }, tx);
+                                  SELECT 1 FROM dbo.MonthlyEmployeeEvaluators mee
+                                  WHERE mee.EvalYear = @Year AND mee.EvalMonth = @Month
+                                    AND mee.EmployeeID = mes.EmployeeID AND mee.EvaluatorID = ev.EvaluatorID
+                              );", new { Year = targetYear, Month = targetMonth, CatID = matchedCat.CategoryID }, tx);
 
                         categoriesWeighted++;
                     }
 
+                    await MonthlyPeriodConfigService.SyncLiveTablesIfLatestPeriodAsync(conn, tx, targetYear, targetMonth);
                     await tx.CommitAsync();
 
-                    string summary = $"اكتمل استيراد بيانات المقيمين وأوزان الفئات بنجاح:\n" +
+                    string targetPeriodLbl = $"{IncentiveCalculatorService.GetArabicMonthName(targetMonth)} {targetYear} م";
+                    string summary = $"اكتمل استيراد بيانات المقيمين وأوزان الفئات لشهر ({targetPeriodLbl}) بنجاح دون التأثير على الشهور السابقة:\n" +
                                      $"• مجموعات المقيمين المحفوظة: {groupsSaved}\n" +
                                      $"• إجمالي أسماء المقيمين: {membersSaved}\n" +
                                      $"• الفئات التي تم اعتماد توزيع الـ 100 درجة لها: {categoriesWeighted}";
@@ -2113,13 +2282,14 @@ namespace SchoolEvaluationERP.Services
             }
         }
 
-        public async Task GenerateEmployeesExcelTemplateAsync(string filePath)
+        public async Task GenerateEmployeesExcelTemplateAsync(string filePath, int? evalYear = null, int? evalMonth = null)
         {
             var branches = await GetBranchesAsync();
-            var categories = await GetCategoriesAsync();
+            var categories = await GetCategoriesAsync(null, evalYear, evalMonth);
             var jobs = await GetJobsAsync();
             var jobTypes = await GetJobTypesAsync();
-            var evalGroups = (await GetEvaluatorGroupsAsync()).Where(g => g.Members.Count > 0).ToList();
+            var evalGroups = (await GetEvaluatorGroupsAsync(evalYear, evalMonth)).Where(g => g.Members.Count > 0).ToList();
+            var existingEmployees = await GetEmployeesAsync("", null, null, "ALL", evalYear, evalMonth);
 
             using var wb = new XLWorkbook();
 
@@ -2208,33 +2378,61 @@ namespace SchoolEvaluationERP.Services
             int totalEvaluatorCols = evalColCursor - 9;
             string sampleBranch = branches.FirstOrDefault()?.BranchName ?? "الحصبة";
 
-            // الصف 3 والصف 4: أمثلة توضيحية مطابقة لنموذج المصفوفة (1 = ينتمي، 0 = لا ينتمي)
-            ws.Cell(3, 1).Value = "ابتسام ابراهيم علي الزيادي - استاذة/";
-            ws.Cell(3, 2).Value = "ابتسام الزيادي";
-            ws.Cell(3, 3).Value = sampleBranch;
-            ws.Cell(3, 4).Value = "المعلمين";
-            ws.Cell(3, 5).Value = "معلم";
-            ws.Cell(3, 6).Value = "معلم لغة عربية";
-            ws.Cell(3, 7).Value = "بحافز";
-            ws.Cell(3, 8).Value = "مستمر";
-
-            ws.Cell(4, 1).Value = "ابراهيم عبدالعزيز عبداللطيف المعلمي - استاذ/";
-            ws.Cell(4, 2).Value = "ابراهيم المعلمي";
-            ws.Cell(4, 3).Value = sampleBranch;
-            ws.Cell(4, 4).Value = "المعلمين";
-            ws.Cell(4, 5).Value = "معلم";
-            ws.Cell(4, 6).Value = "معلم لغة إنجليزية";
-            ws.Cell(4, 7).Value = "بدون حافز";
-            ws.Cell(4, 8).Value = "مستمر";
-
-            for (int offset = 0; offset < totalEvaluatorCols; offset++)
+            if (existingEmployees.Count > 0 && evalGroups.Count > 0)
             {
-                int col = 9 + offset;
-                ws.Cell(3, col).Value = (offset == 2) ? 0 : 1;
-                ws.Cell(3, col).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                var orderedEvalIds = evalGroups.SelectMany(g => g.Members).Select(m => m.EvaluatorID).ToList();
+                int rIdx = 3;
+                foreach (var emp in existingEmployees)
+                {
+                    ws.Cell(rIdx, 1).Value = emp.SystemName;
+                    ws.Cell(rIdx, 2).Value = emp.EvaluationName;
+                    ws.Cell(rIdx, 3).Value = emp.BranchName;
+                    ws.Cell(rIdx, 4).Value = emp.CategoryName;
+                    ws.Cell(rIdx, 5).Value = emp.JobTitle;
+                    ws.Cell(rIdx, 6).Value = emp.JobTypeName;
+                    ws.Cell(rIdx, 7).Value = emp.HasIncentive ? "بحافز" : "بدون حافز";
+                    ws.Cell(rIdx, 8).Value = emp.IsContinuing ? "مستمر" : "منقطع";
 
-                ws.Cell(4, col).Value = (offset == 1 || offset == 2 || offset == 3) ? 1 : 0;
-                ws.Cell(4, col).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                    var assignedSet = (emp.SelectedEvaluatorIds ?? new List<int>()).ToHashSet();
+                    for (int offset = 0; offset < orderedEvalIds.Count; offset++)
+                    {
+                        var flagCell = ws.Cell(rIdx, 9 + offset);
+                        flagCell.Value = assignedSet.Contains(orderedEvalIds[offset]) ? 1 : 0;
+                        flagCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                    }
+                    rIdx++;
+                }
+            }
+            else
+            {
+                // الصف 3 والصف 4: أمثلة توضيحية مطابقة لنموذج المصفوفة (1 = ينتمي، 0 = لا ينتمي)
+                ws.Cell(3, 1).Value = "ابتسام ابراهيم علي الزيادي - استاذة/";
+                ws.Cell(3, 2).Value = "ابتسام الزيادي";
+                ws.Cell(3, 3).Value = sampleBranch;
+                ws.Cell(3, 4).Value = "المعلمين";
+                ws.Cell(3, 5).Value = "معلم";
+                ws.Cell(3, 6).Value = "معلم لغة عربية";
+                ws.Cell(3, 7).Value = "بحافز";
+                ws.Cell(3, 8).Value = "مستمر";
+
+                ws.Cell(4, 1).Value = "ابراهيم عبدالعزيز عبداللطيف المعلمي - استاذ/";
+                ws.Cell(4, 2).Value = "ابراهيم المعلمي";
+                ws.Cell(4, 3).Value = sampleBranch;
+                ws.Cell(4, 4).Value = "المعلمين";
+                ws.Cell(4, 5).Value = "معلم";
+                ws.Cell(4, 6).Value = "معلم لغة إنجليزية";
+                ws.Cell(4, 7).Value = "بدون حافز";
+                ws.Cell(4, 8).Value = "مستمر";
+
+                for (int offset = 0; offset < totalEvaluatorCols; offset++)
+                {
+                    int col = 9 + offset;
+                    ws.Cell(3, col).Value = (offset == 2) ? 0 : 1;
+                    ws.Cell(3, col).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+                    ws.Cell(4, col).Value = (offset == 1 || offset == 2 || offset == 3) ? 1 : 0;
+                    ws.Cell(4, col).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                }
             }
 
             ws.Columns().AdjustToContents();
@@ -2281,7 +2479,7 @@ namespace SchoolEvaluationERP.Services
             wb.SaveAs(filePath);
         }
 
-        public async Task<(bool IsSuccess, string SummaryMessage)> ImportEmployeesFromExcelAsync(string filePath)
+        public async Task<(bool IsSuccess, string SummaryMessage)> ImportEmployeesFromExcelAsync(string filePath, int? evalYear = null, int? evalMonth = null)
         {
             if (!CheckPermission("insert", out string permErr))
                 return (false, permErr);
@@ -2378,10 +2576,22 @@ namespace SchoolEvaluationERP.Services
                     evaluatorColMap[c] = matchedEval.EvaluatorID;
                 }
 
-                var catGroupsRaw = (await conn.QueryAsync<dynamic>("SELECT CategoryID, GroupID FROM dbo.CategoryEvaluatorGroups")).ToList();
-                var catGroupsMap = catGroupsRaw
-                    .GroupBy(x => (int)x.CategoryID)
-                    .ToDictionary(g => g.Key, g => g.Select(r => (int)r.GroupID).ToList());
+                var (targetYear, targetMonth) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+                var (isMonthLocked, lockedByUser, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, targetYear, targetMonth);
+                if (isMonthLocked)
+                {
+                    string lockLbl = $"{IncentiveCalculatorService.GetArabicMonthName(targetMonth)} {targetYear} م";
+                    return (false, $"لا يمكن استيراد الموظفين وإسنادهم لشهر ({lockLbl}) لأنه معتمد ومغلق نهائياً بواسطة ({lockedByUser}).");
+                }
+
+                await MonthlyPeriodConfigService.EnsureMonthMaterializedAsync(conn, null, targetYear, targetMonth);
+                var (latestY, latestM) = await MonthlyPeriodConfigService.GetLatestConfiguredPeriodAsync(conn);
+                bool isLatestPeriod = (targetYear * 100 + targetMonth) >= (latestY * 100 + latestM);
+
+                var effWeightsForImport = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, targetYear, targetMonth);
+                var catGroupsMap = effWeightsForImport
+                    .GroupBy(x => x.CategoryID)
+                    .ToDictionary(g => g.Key, g => g.Select(r => r.GroupID).ToList());
 
                 int insertedCount = 0;
                 int updatedCount = 0;
@@ -2534,46 +2744,97 @@ namespace SchoolEvaluationERP.Services
                     else
                     {
                         targetEmpId = existingEmpId.Value;
-                        await conn.ExecuteAsync(@"
-                            UPDATE dbo.Employees
-                            SET SystemName = @Sys,
-                                EvaluationName = @Eval,
-                                BranchID = @BranchID,
-                                CategoryID = @CatID,
-                                JobID = @JobID,
-                                JobTypeID = @JobTypeID,
-                                HasIncentive = @HasInc,
-                                IsContinuing = @IsCont,
-                                IsActive = 1
-                            WHERE EmployeeID = @ID",
-                            new
-                            {
-                                Sys = sysName,
-                                Eval = evalName,
-                                BranchID = branchId,
-                                CatID = matchedCat.CategoryID,
-                                JobID = matchedJob.JobID,
-                                JobTypeID = matchedJobType.JobTypeID,
-                                HasInc = hasIncentive,
-                                IsCont = isContinuing,
-                                ID = targetEmpId
-                            });
+                        if (isLatestPeriod)
+                        {
+                            await conn.ExecuteAsync(@"
+                                UPDATE dbo.Employees
+                                SET SystemName = @Sys,
+                                    EvaluationName = @Eval,
+                                    BranchID = @BranchID,
+                                    CategoryID = @CatID,
+                                    JobID = @JobID,
+                                    JobTypeID = @JobTypeID,
+                                    HasIncentive = @HasInc,
+                                    IsContinuing = @IsCont,
+                                    IsActive = 1
+                                WHERE EmployeeID = @ID",
+                                new
+                                {
+                                    Sys = sysName,
+                                    Eval = evalName,
+                                    BranchID = branchId,
+                                    CatID = matchedCat.CategoryID,
+                                    JobID = matchedJob.JobID,
+                                    JobTypeID = matchedJobType.JobTypeID,
+                                    HasInc = hasIncentive,
+                                    IsCont = isContinuing,
+                                    ID = targetEmpId
+                                });
+                        }
+                        else
+                        {
+                            await conn.ExecuteAsync(@"
+                                UPDATE dbo.Employees
+                                SET SystemName = @Sys,
+                                    EvaluationName = @Eval,
+                                    BranchID = @BranchID,
+                                    JobID = @JobID,
+                                    JobTypeID = @JobTypeID,
+                                    IsActive = 1
+                                WHERE EmployeeID = @ID",
+                                new
+                                {
+                                    Sys = sysName,
+                                    Eval = evalName,
+                                    BranchID = branchId,
+                                    JobID = matchedJob.JobID,
+                                    JobTypeID = matchedJobType.JobTypeID,
+                                    ID = targetEmpId
+                                });
+                        }
                         updatedCount++;
                     }
 
+                    await conn.ExecuteAsync(@"
+                        IF EXISTS (SELECT 1 FROM dbo.MonthlyEmployeeSnapshots WHERE EvalYear = @Year AND EvalMonth = @Month AND EmployeeID = @EmpID)
+                        BEGIN
+                            UPDATE dbo.MonthlyEmployeeSnapshots
+                            SET CategoryID = @CatID, HasIncentive = @HasInc, IsContinuing = @IsCont, UpdatedAt = SYSDATETIME()
+                            WHERE EvalYear = @Year AND EvalMonth = @Month AND EmployeeID = @EmpID;
+                        END
+                        ELSE
+                        BEGIN
+                            INSERT INTO dbo.MonthlyEmployeeSnapshots (EvalYear, EvalMonth, EmployeeID, CategoryID, HasIncentive, IsContinuing, UpdatedAt)
+                            VALUES (@Year, @Month, @EmpID, @CatID, @HasInc, @IsCont, SYSDATETIME());
+                        END",
+                        new
+                        {
+                            Year = targetYear,
+                            Month = targetMonth,
+                            EmpID = targetEmpId,
+                            CatID = matchedCat.CategoryID,
+                            HasInc = hasIncentive,
+                            IsCont = isContinuing
+                        });
+
                     if (evaluatorColMap.Count > 0 || chosenEvaluatorIds.Count > 0)
                     {
-                        await conn.ExecuteAsync("DELETE FROM dbo.EmployeeEvaluators WHERE EmployeeID = @EmpID", new { EmpID = targetEmpId });
+                        await conn.ExecuteAsync(
+                            "DELETE FROM dbo.MonthlyEmployeeEvaluators WHERE EvalYear = @Year AND EvalMonth = @Month AND EmployeeID = @EmpID",
+                            new { Year = targetYear, Month = targetMonth, EmpID = targetEmpId });
                         foreach (int evId in chosenEvaluatorIds)
                         {
                             await conn.ExecuteAsync(
-                                "INSERT INTO dbo.EmployeeEvaluators (EmployeeID, EvaluatorID) VALUES (@EmpID, @EvalID)",
-                                new { EmpID = targetEmpId, EvalID = evId });
+                                "INSERT INTO dbo.MonthlyEmployeeEvaluators (EvalYear, EvalMonth, EmployeeID, EvaluatorID, UpdatedAt) VALUES (@Year, @Month, @EmpID, @EvalID, SYSDATETIME())",
+                                new { Year = targetYear, Month = targetMonth, EmpID = targetEmpId, EvalID = evId });
                         }
                     }
                 }
 
-                string report = $"اكتمل استيراد ملف الموظفين بنجاح:\n• موظفون جدد تمت إضافتهم: {insertedCount}\n• موظفون تم تحديث بياناتهم ومقيميهم: {updatedCount}";
+                await MonthlyPeriodConfigService.SyncLiveTablesIfLatestPeriodAsync(conn, null, targetYear, targetMonth);
+
+                string importPeriodLbl = $"{IncentiveCalculatorService.GetArabicMonthName(targetMonth)} {targetYear} م";
+                string report = $"اكتمل استيراد ملف الموظفين وإسنادهم لشهر ({importPeriodLbl}) بنجاح دون التأثير على الشهور السابقة:\n• موظفون جدد تمت إضافتهم: {insertedCount}\n• موظفون تم تحديث بياناتهم ومقيميهم: {updatedCount}";
                 if (skippedReasons.Count > 0)
                 {
                     report += $"\n• أسطر تم تخطيها ({skippedReasons.Count}):\n" + string.Join("\n", skippedReasons.Take(6));
@@ -2588,6 +2849,19 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

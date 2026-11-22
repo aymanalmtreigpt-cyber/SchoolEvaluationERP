@@ -16,12 +16,17 @@ namespace SchoolEvaluationERP.Views
     public partial class TemplatesView : UserControl
     {
         private readonly TemplateService _service = new();
+        private readonly MonthlyPeriodConfigService _periodService = new();
         private TemplateFullModel? _currentTemplate;
         private TemplateSheetModel? _activeSheet;
         private List<SheetEmployeeRowModel> _availableCategoryEmployees = new();
 
         private bool _isReadOnlyViewMode = true;
+        private bool _isInitializingPeriod;
         private int _searchRequestVersion;
+
+        private int SelectedTemplateYear => CmbTemplatePreviewYear?.SelectedItem is int y ? y : DateTime.Now.Year;
+        private int SelectedTemplateMonth => CmbTemplatePreviewMonth?.SelectedValue is int m ? m : DateTime.Now.Month;
 
         private bool CanInsert => AuthService.CurrentSession?.HasPermission("Templates", "insert") == true;
         private bool CanUpdate => AuthService.CurrentSession?.HasPermission("Templates", "update") == true;
@@ -34,6 +39,7 @@ namespace SchoolEvaluationERP.Views
             Loaded += async (_, _) =>
             {
                 ApplyPermissionsToControls();
+                await InitializeTemplatePeriodSelectorsAsync();
                 await RefreshSavedTemplatesGridAsync();
             };
         }
@@ -45,17 +51,47 @@ namespace SchoolEvaluationERP.Views
             BtnDeleteSelectedTemplate.Visibility = CanDelete ? Visibility.Visible : Visibility.Collapsed;
         }
 
+        private Task InitializeTemplatePeriodSelectorsAsync()
+        {
+            _isInitializingPeriod = true;
+
+            int currentYear = DateTime.Now.Year;
+            int currentMonth = DateTime.Now.Month;
+            var years = new List<int> { currentYear - 1, currentYear, currentYear + 1, currentYear + 2 };
+
+            CmbTemplatePreviewYear.ItemsSource = years;
+            CmbTemplatePreviewYear.SelectedItem = currentYear;
+
+            CmbTemplatePreviewMonth.ItemsSource = MonthOptionItem.GetAllMonths();
+            CmbTemplatePreviewMonth.SelectedValue = currentMonth;
+
+            _isInitializingPeriod = false;
+            return Task.CompletedTask;
+        }
+
+        private async void TemplatePeriodFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isInitializingPeriod || !IsLoaded) return;
+            await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
+
+            if (_currentTemplate != null && _currentTemplate.TemplateID > 0 && _isReadOnlyViewMode)
+            {
+                await LoadTemplateIntoDesignerAsync(_currentTemplate.TemplateID, openInReadOnlyMode: true, switchToDesignerTab: false);
+            }
+        }
+
         private async Task RefreshSavedTemplatesGridAsync(bool syncSystemTemplates = true)
         {
             if (!IsLoaded) return;
             int requestVersion = ++_searchRequestVersion;
             string search = TxtSearchTemplateEvaluator.Text.Trim();
-            var list = await _service.GetCurrentTemplatesAsync(search, syncSystemTemplates);
+            var list = await _service.GetCurrentTemplatesAsync(search, syncSystemTemplates, SelectedTemplateYear, SelectedTemplateMonth);
             if (requestVersion != _searchRequestVersion)
                 return;
 
             GridSavedTemplates.ItemsSource = list;
-            TxtTemplatesCountBadge.Text = $"إجمالي القوالب الفعالة: {list.Count}";
+            string mName = IncentiveCalculatorService.GetArabicMonthName(SelectedTemplateMonth);
+            TxtTemplatesCountBadge.Text = $"إجمالي القوالب الفعالة ({mName} {SelectedTemplateYear}): {list.Count}";
         }
 
         private async void TxtSearchTemplateEvaluator_TextChanged(object sender, TextChangedEventArgs e)
@@ -122,7 +158,7 @@ namespace SchoolEvaluationERP.Views
 
         private async Task LoadTemplateIntoDesignerAsync(int templateId, bool openInReadOnlyMode, bool switchToDesignerTab)
         {
-            var fullModel = await _service.GetTemplateFullDetailsAsync(templateId);
+            var fullModel = await _service.GetTemplateFullDetailsAsync(templateId, SelectedTemplateYear, SelectedTemplateMonth);
             if (fullModel == null)
             {
                 MessageBox.Show("تعذر تحميل تفاصيل القالب المحدد.", "خطأ", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -175,48 +211,49 @@ namespace SchoolEvaluationERP.Views
 
             var chosenEvaluator = evalDlg.SelectedEvaluator;
 
-            var evaluatorCategories = await _service.GetCategoriesForEvaluatorAsync(chosenEvaluator.EvaluatorID);
-            if (evaluatorCategories.Count == 0)
+            if (chosenEvaluator.HasExistingTemplate)
             {
                 MessageBox.Show(
-                    $"مجموعة المقيم ({chosenEvaluator.EvaluatorName}) غير مخصصة لأي فئة حالياً في (1. صفحة الأساسيات).\nيرجى تخصيص الدرجات للفئات من تبويب (المقيمون وتخصيص الدرجات) أولاً.",
-                    "لا توجد فئات مخصصة للمقيم",
+                    $"المقيم ({chosenEvaluator.EvaluatorName}) لديه قالب تقييم فعّال مسبقاً.\nسيتم فتح قالبه مباشرة في وضع التعديل مع تحديث الأوراق والموظفين تلقائياً.",
+                    "فتح القالب الموجود",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+
+                await LoadTemplateIntoDesignerAsync(chosenEvaluator.ExistingTemplateID, openInReadOnlyMode: false, switchToDesignerTab: true);
+                return;
+            }
+
+            var autoTemplate = await _service.BuildAutoTemplateForEvaluatorAsync(chosenEvaluator, SelectedTemplateYear, SelectedTemplateMonth);
+            if (autoTemplate == null || autoTemplate.Sheets.Count == 0)
+            {
+                MessageBox.Show(
+                    $"لا يوجد موظفون مستمرون مسندون للمقيم ({chosenEvaluator.EvaluatorName}) في الشهر المحدد حالياً.\nيرجى تخصيص الدرجات للفئات وإسناد الموظفين له من (1. صفحة الأساسيات) أولاً.",
+                    "لا يوجد موظفون مسندون للمقيم",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
-            var sheetDlg = new AddSheetDialog(chosenEvaluator.EvaluatorID, nextSheetNumber: 1)
+            var (isSaved, saveMsg, savedId) = await _service.SaveTemplateAsync(autoTemplate, SelectedTemplateYear, SelectedTemplateMonth);
+            if (!isSaved || savedId <= 0)
             {
-                Owner = Window.GetWindow(this)
-            };
-
-            if (sheetDlg.ShowDialog() != true)
+                MessageBox.Show(saveMsg, "تعذر إنشاء القالب", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
+            }
 
-            _currentTemplate = new TemplateFullModel
-            {
-                TemplateID = 0,
-                TemplateGroupGuid = Guid.NewGuid(),
-                EvaluatorID = chosenEvaluator.EvaluatorID,
-                EvaluatorName = chosenEvaluator.EvaluatorName,
-                GroupName = chosenEvaluator.GroupName,
-                VersionNumber = 1
-            };
+            int totalAutoEmps = autoTemplate.Sheets.Sum(s => s.EmployeeRows.Count);
+            await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
+            await LoadTemplateIntoDesignerAsync(savedId, openInReadOnlyMode: false, switchToDesignerTab: true);
 
-            _isReadOnlyViewMode = false;
-
-            var firstSheet = TemplateSheetModel.CreateDefault(
-                sheetDlg.EnteredSheetName,
-                sheetDlg.SelectedCategoryId,
-                sheetDlg.SelectedCategoryName,
-                sheetDlg.SelectedBranchId,
-                sheetDlg.SelectedBranchName,
-                1);
-            _currentTemplate.Sheets.Add(firstSheet);
-
-            MainTemplatesTabControl.SelectedItem = TabTemplateDesigner;
-            await ActivateSheetInDesignerAsync(firstSheet);
+            MessageBox.Show(
+                $"✔ تم إنشاء وحفظ قالب المقيم ({chosenEvaluator.EvaluatorName}) تلقائياً بنجاح:\n" +
+                $"• عدد الأوراق المنشأة تلقائياً (بأسماء الفئات): {autoTemplate.Sheets.Count} ورقة\n" +
+                $"• إجمالي الموظفين المدرجين من جميع الفروع: {totalAutoEmps} موظف\n" +
+                $"• العمود الافتراضي لكل ورقة: (أساسيات التقييم — 100 درجة)\n\n" +
+                "يمكنك تعديل أعمدة التقييم أو استثناء أي موظف يدوياً ثم الضغط على (💾 حفظ واعتماد القالب بالكامل) متى شئت.",
+                "تم إنشاء القالب تلقائياً",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
         private async void BtnPrintSelectedTemplatePdf_Click(object sender, RoutedEventArgs e)
@@ -227,7 +264,7 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            var fullModel = await _service.GetTemplateFullDetailsAsync(selected.TemplateID);
+            var fullModel = await _service.GetTemplateFullDetailsAsync(selected.TemplateID, SelectedTemplateYear, SelectedTemplateMonth);
             if (fullModel != null)
             {
                 ExportTemplateToPdfWithDialog(fullModel);
@@ -238,7 +275,7 @@ namespace SchoolEvaluationERP.Views
         {
             try
             {
-                var evaluatorSheets = await _service.GetAllEvaluatorsWithAssignedEmployeesAsync();
+                var evaluatorSheets = await _service.GetAllEvaluatorsWithAssignedEmployeesAsync(SelectedTemplateYear, SelectedTemplateMonth);
                 if (evaluatorSheets.Count == 0)
                 {
                     MessageBox.Show(
@@ -295,7 +332,7 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            var fullModel = await _service.GetTemplateFullDetailsAsync(selected.TemplateID);
+            var fullModel = await _service.GetTemplateFullDetailsAsync(selected.TemplateID, SelectedTemplateYear, SelectedTemplateMonth);
             if (fullModel != null)
             {
                 ExportTemplateToExcelWithDialog(fullModel);
@@ -395,7 +432,9 @@ namespace SchoolEvaluationERP.Views
             _availableCategoryEmployees = await _service.GetEligibleEmployeesForSheetAsync(
                 _activeSheet.TargetCategoryID,
                 _activeSheet.TargetBranchID,
-                _currentTemplate.EvaluatorID);
+                _currentTemplate.EvaluatorID,
+                SelectedTemplateYear,
+                SelectedTemplateMonth);
 
             RefreshAvailableEmployeesCombo();
             RebuildInteractiveCriteriaStrip(canEditNow);
@@ -617,6 +656,52 @@ namespace SchoolEvaluationERP.Views
             RebuildBottomSheetTabsBar();
         }
 
+        private void BtnCopyCriteriaToAllSheets_Click(object sender, RoutedEventArgs e)
+        {
+            if (_currentTemplate == null || _activeSheet == null || _isReadOnlyViewMode || _currentTemplate.IsSystemTemplate)
+                return;
+
+            if (_currentTemplate.Sheets.Count <= 1)
+            {
+                MessageBox.Show("القالب يحتوي على ورقة واحدة فقط.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            int otherSheetsCount = _currentTemplate.Sheets.Count - 1;
+            var confirm = MessageBox.Show(
+                $"سيتم نسخ أعمدة مبادئ التقييم ودرجاتها من الورقة الحالية ({_activeSheet.SheetName}) وتعميمها على جميع أوراق القالب الأخرى ({otherSheetsCount} ورقة).\n\nهل تريد المتابعة؟",
+                "تأكيد تعميم أعمدة التقييم",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            var sourceCols = _activeSheet.CriteriaColumns.ToList();
+            foreach (var sheet in _currentTemplate.Sheets)
+            {
+                if (ReferenceEquals(sheet, _activeSheet)) continue;
+
+                sheet.CriteriaColumns.Clear();
+                for (int i = 0; i < sourceCols.Count; i++)
+                {
+                    sheet.CriteriaColumns.Add(new CriteriaColumnModel
+                    {
+                        CriteriaTitle = sourceCols[i].CriteriaTitle,
+                        MaxScore = sourceCols[i].MaxScore,
+                        ColumnOrder = i + 1
+                    });
+                }
+                sheet.NotifyTotalsChanged();
+            }
+
+            RebuildBottomSheetTabsBar();
+            MessageBox.Show(
+                $"✔ تم تعميم أعمدة التقييم بنجاح على جميع أوراق القالب ({_currentTemplate.Sheets.Count} ورقة).\nاضغط (💾 حفظ واعتماد القالب بالكامل) لاعتماد التغيير.",
+                "تم التعميم بنجاح",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
         private void RebuildPreviewDataGrid(bool canEditNow)
         {
             GridSheetPreview.Columns.Clear();
@@ -715,7 +800,7 @@ namespace SchoolEvaluationERP.Views
         {
             if (_currentTemplate != null && _currentTemplate.IsSystemTemplate && _currentTemplate.TemplateID > 0)
             {
-                var (isSuccess, _, savedId) = await _service.SaveTemplateAsync(_currentTemplate);
+                var (isSuccess, _, savedId) = await _service.SaveTemplateAsync(_currentTemplate, SelectedTemplateYear, SelectedTemplateMonth);
                 if (isSuccess && savedId > 0)
                 {
                     _currentTemplate.TemplateID = savedId;
@@ -861,7 +946,12 @@ namespace SchoolEvaluationERP.Views
         {
             if (_currentTemplate == null || _isReadOnlyViewMode) return;
 
-            var dlg = new AddSheetDialog(_currentTemplate.EvaluatorID, _currentTemplate.Sheets.Count + 1)
+            var existingCatIds = _currentTemplate.Sheets
+                .Where(s => s.TargetCategoryID.HasValue)
+                .Select(s => s.TargetCategoryID!.Value)
+                .ToHashSet();
+
+            var dlg = new AddSheetDialog(_currentTemplate.EvaluatorID, existingCatIds, SelectedTemplateYear, SelectedTemplateMonth)
             {
                 Owner = Window.GetWindow(this)
             };
@@ -869,74 +959,35 @@ namespace SchoolEvaluationERP.Views
             if (dlg.ShowDialog() == true)
             {
                 var newSheet = TemplateSheetModel.CreateDefault(
-                    dlg.EnteredSheetName,
+                    dlg.SelectedCategoryName,
                     dlg.SelectedCategoryId,
                     dlg.SelectedCategoryName,
-                    dlg.SelectedBranchId,
-                    dlg.SelectedBranchName,
+                    null,
+                    "جميع الفروع (كلاهما)",
                     _currentTemplate.Sheets.Count + 1);
+
+                var eligible = await _service.GetEligibleEmployeesForSheetAsync(
+                    dlg.SelectedCategoryId,
+                    null,
+                    _currentTemplate.EvaluatorID,
+                    SelectedTemplateYear,
+                    SelectedTemplateMonth);
+
+                var alreadyInTemplateIds = _currentTemplate.Sheets
+                    .SelectMany(s => s.EmployeeRows)
+                    .Select(x => x.EmployeeID)
+                    .ToHashSet();
+
+                int rowNum = 1;
+                foreach (var emp in eligible)
+                {
+                    if (alreadyInTemplateIds.Contains(emp.EmployeeID)) continue;
+                    emp.RowOrder = rowNum++;
+                    newSheet.EmployeeRows.Add(emp);
+                }
 
                 _currentTemplate.Sheets.Add(newSheet);
                 await ActivateSheetInDesignerAsync(newSheet);
-            }
-        }
-
-        private async void BtnRenameCurrentSheet_Click(object sender, RoutedEventArgs e)
-        {
-            if (_currentTemplate == null || _activeSheet == null || _isReadOnlyViewMode) return;
-
-            var dlg = new AddSheetDialog(
-                _currentTemplate.EvaluatorID,
-                _activeSheet.SortOrder,
-                _activeSheet.SheetName,
-                _activeSheet.TargetCategoryID,
-                _activeSheet.TargetCategoryName,
-                _activeSheet.TargetBranchID)
-            {
-                Owner = Window.GetWindow(this)
-            };
-
-            if (dlg.ShowDialog() == true)
-            {
-                bool categoryChanged = _activeSheet.TargetCategoryID != dlg.SelectedCategoryId;
-                bool narrowedToSpecificBranch = !categoryChanged
-                    && dlg.SelectedBranchId.HasValue
-                    && dlg.SelectedBranchId.Value > 0
-                    && _activeSheet.EmployeeRows.Any(emp => emp.BranchID != dlg.SelectedBranchId.Value);
-
-                if (categoryChanged && _activeSheet.EmployeeRows.Count > 0)
-                {
-                    var confirm = MessageBox.Show(
-                        "تغيير فئة الورقة سيؤدي إلى تفريغ قائمة الموظفين المضافين حالياً في هذه الورقة لأنهم يتبعون الفئة السابقة. هل تريد المتابعة؟",
-                        "تأكيد تغيير الفئة",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Warning);
-
-                    if (confirm != MessageBoxResult.Yes) return;
-                    _activeSheet.EmployeeRows.Clear();
-                }
-                else if (narrowedToSpecificBranch)
-                {
-                    var confirm = MessageBox.Show(
-                        $"تحديد فرع ({dlg.SelectedBranchName}) فقط سيزيل من هذه الورقة الموظفين التابعين للفروع الأخرى. هل تريد المتابعة؟",
-                        "تأكيد تحديد الفرع",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Warning);
-
-                    if (confirm != MessageBoxResult.Yes) return;
-
-                    var toRemove = _activeSheet.EmployeeRows.Where(emp => emp.BranchID != dlg.SelectedBranchId!.Value).ToList();
-                    foreach (var r in toRemove)
-                        _activeSheet.EmployeeRows.Remove(r);
-                    _activeSheet.ReindexOrders();
-                }
-
-                _activeSheet.SheetName = dlg.EnteredSheetName;
-                _activeSheet.TargetCategoryID = dlg.SelectedCategoryId;
-                _activeSheet.TargetCategoryName = dlg.SelectedCategoryName;
-                _activeSheet.TargetBranchID = dlg.SelectedBranchId;
-                _activeSheet.TargetBranchName = dlg.SelectedBranchName;
-                await ActivateSheetInDesignerAsync(_activeSheet);
             }
         }
 
@@ -967,14 +1018,14 @@ namespace SchoolEvaluationERP.Views
             if (_currentTemplate == null || _isReadOnlyViewMode) return;
 
             BtnDesignerSaveTemplate.IsEnabled = false;
-            var (isSuccess, message, savedId) = await _service.SaveTemplateAsync(_currentTemplate);
+            var (isSuccess, message, savedId) = await _service.SaveTemplateAsync(_currentTemplate, SelectedTemplateYear, SelectedTemplateMonth);
             BtnDesignerSaveTemplate.IsEnabled = true;
 
             MessageBox.Show(message, isSuccess ? "تم حفظ القالب" : "تنبيه التحقق من شروط القالب", MessageBoxButton.OK, isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
 
             if (isSuccess && savedId > 0)
             {
-                var reloaded = await _service.GetTemplateFullDetailsAsync(savedId);
+                var reloaded = await _service.GetTemplateFullDetailsAsync(savedId, SelectedTemplateYear, SelectedTemplateMonth);
                 if (reloaded != null)
                 {
                     _currentTemplate = reloaded;
@@ -1084,6 +1135,14 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
+
+
+
 
 
 

@@ -80,9 +80,19 @@
                                        FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"
                                        TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,10,4"/>
 
-                            <Border x:Name="BadgeMonthStatus" Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="10,3" VerticalAlignment="Center" Margin="0,0,0,4" Visibility="Collapsed">
+                            <Border x:Name="BadgeMonthStatus" Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="10,3" VerticalAlignment="Center" Margin="0,0,8,4" Visibility="Collapsed">
                                 <TextBlock x:Name="TxtBadgeMonthStatus" Text="شهر جديد متاح للإدخال" Foreground="#047857" FontWeight="Bold" FontSize="12" TextWrapping="Wrap"/>
                             </Border>
+
+                            <Button x:Name="BtnMissingScoresAlert"
+                                    Content="⚠ لم يتم إدخال تقييم لـ (0) موظف — اضغط للانتقال للموظف ⬇"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Height="29" Padding="12,0" FontSize="12" FontWeight="Bold"
+                                    Background="#FEF2F2" BorderBrush="#EF4444" Foreground="#B91C1C"
+                                    VerticalAlignment="Center" Margin="0,0,0,4"
+                                    ToolTip="اضغط للانتقال مباشرة إلى الموظف التالي الذي لم يتم إدخال تقييمه في أي ورقة من أوراق القالب"
+                                    Visibility="Collapsed"
+                                    Click="BtnMissingScoresAlert_Click"/>
                         </WrapPanel>
 
                         <TextBlock x:Name="TxtWorkspaceHint"
@@ -94,6 +104,13 @@
                                     Style="{StaticResource SecondaryButton}" Height="34" Padding="12,0" Margin="0,0,8,4"
                                     Visibility="Collapsed"
                                     Click="BtnUnlockSavedMonthEdit_Click"/>
+
+                            <Button x:Name="BtnSyncTemplateEmployees" Content="🔄 مزامنة الموظفين مع القالب"
+                                    Style="{StaticResource SecondaryButton}" Height="34" Padding="12,0" Margin="0,0,8,4"
+                                    Background="#EEF2FF" BorderBrush="#6366F1" Foreground="#3730A3" FontWeight="Bold"
+                                    ToolTip="مقارنة جميع أوراق هذا الشهر مع أحدث نسخة من القالب لإضافة الموظفين الجدد أو إزالة من أُزيلوا من القالب"
+                                    Visibility="Collapsed"
+                                    Click="BtnSyncTemplateEmployees_Click"/>
 
                             <Button x:Name="BtnImportBulkMultiMonthExcel" Content="📦 سحب التقييمات المجمعة (أشهر 7-10 لكل المقيمين)"
                                     Style="{StaticResource SecondaryButton}" Height="34" Padding="12,0" Margin="0,0,8,4"
@@ -134,7 +151,21 @@
                           VerticalScrollBarVisibility="Auto"
                           BeginningEdit="GridWeeklyScores_BeginningEdit"
                           PreparingCellForEdit="GridWeeklyScores_PreparingCellForEdit"
-                          CellEditEnding="GridWeeklyScores_CellEditEnding"/>
+                          CellEditEnding="GridWeeklyScores_CellEditEnding">
+                    <DataGrid.RowStyle>
+                        <Style TargetType="DataGridRow">
+                            <Style.Triggers>
+                                <MultiDataTrigger>
+                                    <MultiDataTrigger.Conditions>
+                                        <Condition Binding="{Binding HasAnyEmptyCriteria}" Value="True"/>
+                                        <Condition Binding="{Binding RelativeSource={RelativeSource Self}, Path=IsSelected}" Value="False"/>
+                                    </MultiDataTrigger.Conditions>
+                                    <Setter Property="Background" Value="#FFFBEB"/>
+                                </MultiDataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </DataGrid.RowStyle>
+                </DataGrid>
 
                 <!-- 3: الشريط السفلي لأوراق القالب -->
                 <Border Grid.Row="3" x:Name="PanelBottomSheetsBar" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1.5" CornerRadius="8" Padding="12,8" Margin="0,8,0,0">
@@ -162,4 +193,7 @@
         </Border>
     </Grid>
 </UserControl>
+
+
+
 

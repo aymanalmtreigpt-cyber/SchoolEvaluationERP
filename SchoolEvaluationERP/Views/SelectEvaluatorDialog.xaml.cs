@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -22,7 +22,7 @@ namespace SchoolEvaluationERP.Views
 
             Loaded += async (_, _) =>
             {
-                _allEvaluators = await _service.SearchEvaluatorsAsync();
+                _allEvaluators = await _service.SearchEvaluatorsAsync(excludeSystemGroups: true);
                 LstEvaluators.ItemsSource = _allEvaluators;
                 if (_allEvaluators.Count > 0)
                     LstEvaluators.SelectedIndex = 0;
@@ -73,3 +73,4 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+

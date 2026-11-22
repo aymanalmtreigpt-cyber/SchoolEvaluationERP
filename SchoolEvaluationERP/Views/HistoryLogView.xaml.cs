@@ -148,6 +148,7 @@ namespace SchoolEvaluationERP.Views
             }
 
             _currentRecordWorkspace = workspace;
+            TxtFilterSheetEmployee.Text = string.Empty;
 
             if (switchToDetailsTab)
             {
@@ -177,10 +178,7 @@ namespace SchoolEvaluationERP.Views
 
             BadgeDetailsMode.Visibility = Visibility.Visible;
 
-            RebuildDetailScoresDataGrid();
             ApplyEmployeeSearchFilterToDetailGrid();
-            RebuildDetailBottomSheetTabsBar();
-            UpdateDetailSheetAverageBadge();
         }
 
         private void RebuildDetailScoresDataGrid()
@@ -316,21 +314,260 @@ namespace SchoolEvaluationERP.Views
             });
         }
 
+        private class CrossSheetHistorySearchRow
+        {
+            public int RowOrder { get; set; }
+            public WeeklyEntrySheetModel SourceSheet { get; set; } = null!;
+            public WeeklyScoreRowViewModel SourceEmployee { get; set; } = null!;
+            public string SheetDisplay => $"{SourceSheet.SheetName} ({SourceSheet.TargetCategoryName})";
+            public string EvaluationName => SourceEmployee.EvaluationName;
+            public string BranchName => SourceEmployee.BranchName;
+            public string FullJobDisplay => SourceEmployee.FullJobDisplay;
+            public string IncentiveBadgeDisplay => SourceEmployee.IncentiveBadgeDisplay;
+            public string CriteriaSummary { get; set; } = string.Empty;
+            public string BalancingDeltaDisplay => SourceEmployee.BalancingDeltaDisplay;
+            public string RawTotalDisplay => SourceEmployee.RawTotalDisplay;
+            public string WeightedScoreDisplay => SourceEmployee.WeightedScoreDisplay;
+        }
+
+        private static string NormalizeArabicSearch(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            return text.Trim()
+                .Replace('أ', 'ا')
+                .Replace('إ', 'ا')
+                .Replace('آ', 'ا')
+                .Replace('ة', 'ه')
+                .Replace('ى', 'ي')
+                .Replace("ـ", string.Empty);
+        }
+
+        private static bool MatchesEmployeeSearch(WeeklyEntrySheetModel sheet, WeeklyScoreRowViewModel emp, string normFilter)
+        {
+            return NormalizeArabicSearch(emp.EvaluationName).Contains(normFilter, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(emp.SystemName).Contains(normFilter, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(emp.BranchName).Contains(normFilter, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(emp.FullJobDisplay).Contains(normFilter, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(emp.CategoryName).Contains(normFilter, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(sheet.SheetName).Contains(normFilter, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(sheet.TargetCategoryName).Contains(normFilter, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string BuildCriteriaSummary(WeeklyEntrySheetModel sheet, WeeklyScoreRowViewModel emp)
+        {
+            var parts = new List<string>();
+            for (int i = 0; i < Math.Min(sheet.CriteriaColumns.Count, emp.CriteriaCount); i++)
+            {
+                var crit = sheet.CriteriaColumns[i];
+                if (_currentRecordWorkspace != null && _currentRecordWorkspace.IsCountBasedEvaluation)
+                {
+                    parts.Add($"{crit.CriteriaTitle}: {emp[i]}");
+                }
+                else
+                {
+                    parts.Add($"{crit.CriteriaTitle}: {emp[i]}/{crit.MaxScore:0}");
+                }
+            }
+            return string.Join("  |  ", parts);
+        }
+
+        private void RebuildCrossSheetSearchDataGrid(bool anyBalancingDelta)
+        {
+            GridRecordSheetScores.Columns.Clear();
+            var wrapStyle = TryFindResource("WrappingCellTextStyle") as Style;
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "م",
+                Binding = new Binding("RowOrder"),
+                ElementStyle = wrapStyle,
+                IsReadOnly = true,
+                Width = 45,
+                MinWidth = 45
+            });
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "ورقة التقييم",
+                Binding = new Binding("SheetDisplay"),
+                ElementStyle = wrapStyle,
+                IsReadOnly = true,
+                Width = 175,
+                MinWidth = 140
+            });
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "الاسم التقييمي للموظف",
+                Binding = new Binding("EvaluationName"),
+                ElementStyle = wrapStyle,
+                IsReadOnly = true,
+                Width = 190,
+                MinWidth = 165
+            });
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "الفرع",
+                Binding = new Binding("BranchName"),
+                ElementStyle = wrapStyle,
+                IsReadOnly = true,
+                Width = 85,
+                MinWidth = 75
+            });
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "الوظيفة ونوعها",
+                Binding = new Binding("FullJobDisplay"),
+                ElementStyle = wrapStyle,
+                IsReadOnly = true,
+                Width = 135,
+                MinWidth = 115
+            });
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "الحافز",
+                Binding = new Binding("IncentiveBadgeDisplay"),
+                ElementStyle = wrapStyle,
+                IsReadOnly = true,
+                Width = 90,
+                MinWidth = 85
+            });
+
+            var scoreStyle = new Style(typeof(TextBlock));
+            scoreStyle.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.Wrap));
+            scoreStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
+            scoreStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
+            scoreStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(30, 64, 175))));
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "تفصيل الدرجات",
+                Binding = new Binding("CriteriaSummary"),
+                ElementStyle = scoreStyle,
+                IsReadOnly = true,
+                Width = new DataGridLength(1, DataGridLengthUnitType.Star),
+                MinWidth = 160
+            });
+
+            if (anyBalancingDelta)
+            {
+                var deltaStyle = new Style(typeof(TextBlock));
+                deltaStyle.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Center));
+                deltaStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
+                deltaStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
+                deltaStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(180, 83, 9))));
+
+                GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+                {
+                    Header = "⚖ نسبة الموازنة",
+                    Binding = new Binding("BalancingDeltaDisplay"),
+                    ElementStyle = deltaStyle,
+                    IsReadOnly = true,
+                    Width = 105,
+                    MinWidth = 95
+                });
+            }
+
+            var totalStyle = new Style(typeof(TextBlock));
+            totalStyle.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Center));
+            totalStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
+            totalStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
+            totalStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(4, 120, 87))));
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "مجموع الورقة\n(من 100)",
+                Binding = new Binding("RawTotalDisplay"),
+                ElementStyle = totalStyle,
+                IsReadOnly = true,
+                Width = 105,
+                MinWidth = 95
+            });
+
+            var weightedStyle = new Style(typeof(TextBlock));
+            weightedStyle.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Center));
+            weightedStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
+            weightedStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
+            weightedStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(15, 23, 42))));
+
+            GridRecordSheetScores.Columns.Add(new DataGridTextColumn
+            {
+                Header = "حصة المقيم\nالموزونة",
+                Binding = new Binding("WeightedScoreDisplay"),
+                ElementStyle = weightedStyle,
+                IsReadOnly = true,
+                Width = 115,
+                MinWidth = 105
+            });
+        }
+
         private void ApplyEmployeeSearchFilterToDetailGrid()
         {
-            if (_activeDetailSheet == null) return;
+            if (_currentRecordWorkspace == null || _activeDetailSheet == null) return;
 
             string filterText = TxtFilterSheetEmployee.Text.Trim();
-            var rows = string.IsNullOrEmpty(filterText)
-                ? _activeDetailSheet.EmployeeRows.ToList()
-                : _activeDetailSheet.EmployeeRows.Where(e =>
-                    e.EvaluationName.Contains(filterText, StringComparison.OrdinalIgnoreCase) ||
-                    e.BranchName.Contains(filterText, StringComparison.OrdinalIgnoreCase) ||
-                    e.FullJobDisplay.Contains(filterText, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (string.IsNullOrEmpty(filterText))
+            {
+                RebuildDetailScoresDataGrid();
+                var rows = _activeDetailSheet.EmployeeRows.ToList();
+                GridRecordSheetScores.ItemsSource = null;
+                GridRecordSheetScores.ItemsSource = rows;
+                TxtDetailEmployeesCount.Text = $"عدد الموظفين المعروضين: {rows.Count} من {_activeDetailSheet.EmployeeRows.Count}";
+                RebuildDetailBottomSheetTabsBar();
+                UpdateDetailSheetAverageBadge();
+                return;
+            }
+
+            string normFilter = NormalizeArabicSearch(filterText);
+            var matchedRows = new List<CrossSheetHistorySearchRow>();
+            var matchCountsBySheet = new Dictionary<WeeklyEntrySheetModel, int>();
+            int totalWorkspaceEmps = 0;
+
+            foreach (var sheet in _currentRecordWorkspace.Sheets)
+            {
+                totalWorkspaceEmps += sheet.EmployeeRows.Count;
+                int sheetMatches = 0;
+                foreach (var emp in sheet.EmployeeRows)
+                {
+                    if (MatchesEmployeeSearch(sheet, emp, normFilter))
+                    {
+                        sheetMatches++;
+                        matchedRows.Add(new CrossSheetHistorySearchRow
+                        {
+                            RowOrder = matchedRows.Count + 1,
+                            SourceSheet = sheet,
+                            SourceEmployee = emp,
+                            CriteriaSummary = BuildCriteriaSummary(sheet, emp)
+                        });
+                    }
+                }
+                matchCountsBySheet[sheet] = sheetMatches;
+            }
+
+            bool anyDelta = matchedRows.Any(r => r.SourceEmployee.BalancingDelta != 0m);
+            RebuildCrossSheetSearchDataGrid(anyDelta);
 
             GridRecordSheetScores.ItemsSource = null;
-            GridRecordSheetScores.ItemsSource = rows;
-            TxtDetailEmployeesCount.Text = $"عدد الموظفين المعروضين: {rows.Count} من {_activeDetailSheet.EmployeeRows.Count}";
+            GridRecordSheetScores.ItemsSource = matchedRows;
+
+            int matchedSheetsCount = matchCountsBySheet.Values.Count(c => c > 0);
+            TxtDetailEmployeesCount.Text =
+                $"نتائج البحث في جميع أوراق القالب: {matchedRows.Count} من {totalWorkspaceEmps} موظف (في {matchedSheetsCount} من {_currentRecordWorkspace.Sheets.Count} أوراق — دبل كليك لفتح ورقة الموظف)";
+
+            RebuildDetailBottomSheetTabsBar(matchCountsBySheet);
+
+            if (matchedRows.Count == 0)
+            {
+                TxtDetailSheetAverageBadge.Text = "متوسط نتائج البحث: 0 / 100";
+            }
+            else
+            {
+                decimal avg = matchedRows.Average(r => r.SourceEmployee.RawTotalOutOf100);
+                TxtDetailSheetAverageBadge.Text = $"متوسط نتائج البحث ({matchedRows.Count} موظف): {avg:0.##} من 100";
+            }
         }
 
         private void TxtFilterSheetEmployee_TextChanged(object sender, TextChangedEventArgs e)
@@ -342,6 +579,21 @@ namespace SchoolEvaluationERP.Views
         {
             TxtFilterSheetEmployee.Text = string.Empty;
             ApplyEmployeeSearchFilterToDetailGrid();
+        }
+
+        private void GridRecordSheetScores_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+        {
+            if (GridRecordSheetScores.SelectedItem is CrossSheetHistorySearchRow searchRow)
+            {
+                var targetSheet = searchRow.SourceSheet;
+                var targetEmp = searchRow.SourceEmployee;
+
+                TxtFilterSheetEmployee.Text = string.Empty;
+                ActivateDetailSheet(targetSheet);
+
+                GridRecordSheetScores.SelectedItem = targetEmp;
+                GridRecordSheetScores.ScrollIntoView(targetEmp);
+            }
         }
 
         private void UpdateDetailSheetAverageBadge()
@@ -356,41 +608,68 @@ namespace SchoolEvaluationERP.Views
             TxtDetailSheetAverageBadge.Text = $"متوسط درجات الورقة الحالية ({_activeDetailSheet.EmployeeRows.Count} موظف): {avg:0.##} من 100";
         }
 
-        private void RebuildDetailBottomSheetTabsBar()
+        private void RebuildDetailBottomSheetTabsBar(Dictionary<WeeklyEntrySheetModel, int>? searchMatchCounts = null)
         {
             StackDetailSheetTabs.Children.Clear();
             if (_currentRecordWorkspace == null) return;
 
+            bool isSearchMode = searchMatchCounts != null;
+
             foreach (var sheet in _currentRecordWorkspace.Sheets)
             {
-                bool isCurrent = ReferenceEquals(sheet, _activeDetailSheet);
+                bool isCurrent = !isSearchMode && ReferenceEquals(sheet, _activeDetailSheet);
+                int matchCnt = isSearchMode && searchMatchCounts!.TryGetValue(sheet, out int c) ? c : 0;
+
+                string tabContent = isSearchMode
+                    ? $"📄  {sheet.SheetName} ({sheet.TargetCategoryName}) [🔍 {matchCnt} نتيجة]"
+                    : $"📄  {sheet.SheetName} ({sheet.TargetCategoryName}) [{sheet.EmployeeRows.Count} موظف]";
+
+                Brush bg = isCurrent
+                    ? new SolidColorBrush(Color.FromRgb(37, 99, 235))
+                    : (isSearchMode && matchCnt > 0
+                        ? new SolidColorBrush(Color.FromRgb(236, 253, 245))
+                        : new SolidColorBrush(Color.FromRgb(255, 255, 255)));
+
+                Brush fg = isCurrent
+                    ? Brushes.White
+                    : (isSearchMode && matchCnt > 0
+                        ? new SolidColorBrush(Color.FromRgb(6, 95, 70))
+                        : new SolidColorBrush(Color.FromRgb(30, 41, 59)));
+
+                Brush border = isCurrent
+                    ? new SolidColorBrush(Color.FromRgb(29, 78, 216))
+                    : (isSearchMode && matchCnt > 0
+                        ? new SolidColorBrush(Color.FromRgb(16, 185, 129))
+                        : new SolidColorBrush(Color.FromRgb(148, 163, 184)));
 
                 var tabBtn = new Button
                 {
-                    Content = $"📄  {sheet.SheetName} ({sheet.TargetCategoryName}) [{sheet.EmployeeRows.Count} موظف]",
+                    Content = tabContent,
                     Height = 34,
                     Padding = new Thickness(14, 0, 14, 0),
                     Margin = new Thickness(0, 0, 8, 0),
                     Cursor = Cursors.Hand,
                     FontWeight = FontWeights.Bold,
                     FontSize = 12.5,
-                    Background = isCurrent
-                        ? new SolidColorBrush(Color.FromRgb(37, 99, 235))
-                        : new SolidColorBrush(Color.FromRgb(255, 255, 255)),
-                    Foreground = isCurrent
-                        ? Brushes.White
-                        : new SolidColorBrush(Color.FromRgb(30, 41, 59)),
-                    BorderBrush = isCurrent
-                        ? new SolidColorBrush(Color.FromRgb(29, 78, 216))
-                        : new SolidColorBrush(Color.FromRgb(148, 163, 184)),
+                    Background = bg,
+                    Foreground = fg,
+                    BorderBrush = border,
                     BorderThickness = new Thickness(1.5)
                 };
 
                 var capturedSheet = sheet;
-                tabBtn.Click += (_, _) => ActivateDetailSheet(capturedSheet);
+                tabBtn.Click += (_, _) =>
+                {
+                    if (!string.IsNullOrEmpty(TxtFilterSheetEmployee.Text))
+                        TxtFilterSheetEmployee.Text = string.Empty;
+                    ActivateDetailSheet(capturedSheet);
+                };
 
                 StackDetailSheetTabs.Children.Add(tabBtn);
             }
         }
     }
 }
+
+
+

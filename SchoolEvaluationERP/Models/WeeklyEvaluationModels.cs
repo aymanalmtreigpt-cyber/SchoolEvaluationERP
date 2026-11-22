@@ -39,7 +39,7 @@ namespace SchoolEvaluationERP.Models
 
     public class WeeklyScoreRowViewModel : INotifyPropertyChanged
     {
-        private int[] _scores = Array.Empty<int>();
+        private int?[] _scores = Array.Empty<int?>();
         private int[] _maxScores = Array.Empty<int>();
         private int[] _criteriaIds = Array.Empty<int>();
         private decimal _balancingDelta;
@@ -135,7 +135,7 @@ namespace SchoolEvaluationERP.Models
             DirectCalculatedScoreOverride = null;
 
             int count = criteriaColumns.Count;
-            _scores = new int[count];
+            _scores = new int?[count];
             _maxScores = new int[count];
             _criteriaIds = new int[count];
             _balancingDelta = Math.Round(savedBalancingDelta, 2, MidpointRounding.AwayFromZero);
@@ -161,7 +161,7 @@ namespace SchoolEvaluationERP.Models
                     }
                     else
                     {
-                        _scores[i] = 0;
+                        _scores[i] = null;
                     }
                 }
                 else
@@ -172,7 +172,7 @@ namespace SchoolEvaluationERP.Models
                     }
                     else
                     {
-                        _scores[i] = 0;
+                        _scores[i] = null;
                     }
                 }
             }
@@ -186,7 +186,27 @@ namespace SchoolEvaluationERP.Models
         public int CriteriaCount => _scores.Length;
         public int GetCriteriaIdAt(int index) => _criteriaIds[index];
         public int GetMaxScoreAt(int index) => _maxScores[index];
-        public int GetScoreAt(int index) => _scores[index];
+        public int GetScoreAt(int index) => (index >= 0 && index < _scores.Length) ? (_scores[index] ?? 0) : 0;
+        public int? GetNullableScoreAt(int index) => (index >= 0 && index < _scores.Length) ? _scores[index] : null;
+
+        public bool HasAnyEmptyCriteria =>
+            _scores.Length > 0 && !DirectCalculatedScoreOverride.HasValue && _scores.Any(s => !s.HasValue);
+
+        public bool IsCompletelyEmpty =>
+            _scores.Length > 0 && !DirectCalculatedScoreOverride.HasValue && _scores.All(s => !s.HasValue);
+
+        public int FirstEmptyCriteriaIndex
+        {
+            get
+            {
+                if (DirectCalculatedScoreOverride.HasValue) return -1;
+                for (int i = 0; i < _scores.Length; i++)
+                {
+                    if (!_scores[i].HasValue) return i;
+                }
+                return -1;
+            }
+        }
 
         /// <summary>
         /// يُرجع الدرجة الفعلية من 100 التي تُحفظ في جدول الدرجات (سواء كانت درجة عادية أو ناتج تحويل أيام الغياب/التأخير).
@@ -198,18 +218,28 @@ namespace SchoolEvaluationERP.Models
             {
                 if (DirectCalculatedScoreOverride.HasValue)
                     return DirectCalculatedScoreOverride.Value;
-                return CalculateGradualScoreFromCount(_scores[index], MaxAllowedCount);
+                if (!_scores[index].HasValue)
+                    return 0m;
+                return CalculateGradualScoreFromCount(_scores[index]!.Value, MaxAllowedCount);
             }
-            return _scores[index];
+            return _scores[index] ?? 0;
         }
 
-        public void SetScoreAt(int index, int value)
+        public void SetScoreAt(int index, int? value)
         {
             if (index < 0 || index >= _scores.Length) return;
 
             DirectCalculatedScoreOverride = null;
-            int maxAllowed = IsCountBasedMode ? 365 : _maxScores[index];
-            int clamped = value < 0 ? 0 : (value > maxAllowed ? maxAllowed : value);
+            int? clamped;
+            if (!value.HasValue)
+            {
+                clamped = null;
+            }
+            else
+            {
+                int maxAllowed = IsCountBasedMode ? 365 : _maxScores[index];
+                clamped = value.Value < 0 ? 0 : (value.Value > maxAllowed ? maxAllowed : value.Value);
+            }
 
             if (_scores[index] != clamped)
             {
@@ -228,16 +258,18 @@ namespace SchoolEvaluationERP.Models
         {
             get
             {
-                if (index < 0 || index >= _scores.Length) return "0";
-                return _scores[index].ToString(CultureInfo.InvariantCulture);
+                if (index < 0 || index >= _scores.Length) return string.Empty;
+                return _scores[index].HasValue
+                    ? _scores[index]!.Value.ToString(CultureInfo.InvariantCulture)
+                    : string.Empty;
             }
             set
             {
                 if (index < 0 || index >= _scores.Length) return;
-                string clean = (value ?? "0").Trim();
+                string clean = (value ?? string.Empty).Trim();
                 if (string.IsNullOrEmpty(clean))
                 {
-                    SetScoreAt(index, 0);
+                    SetScoreAt(index, null);
                     return;
                 }
 
@@ -322,26 +354,33 @@ namespace SchoolEvaluationERP.Models
                 {
                     if (DirectCalculatedScoreOverride.HasValue)
                         return DirectCalculatedScoreOverride.Value;
-                    int countVal = _scores.Length > 0 ? _scores[0] : 0;
-                    return CalculateGradualScoreFromCount(countVal, MaxAllowedCount);
+                    if (_scores.Length == 0 || !_scores[0].HasValue)
+                        return 0m;
+                    return CalculateGradualScoreFromCount(_scores[0]!.Value, MaxAllowedCount);
                 }
-                return _scores.Sum();
+                return _scores.Sum(s => s ?? 0);
             }
         }
 
-        public decimal RawTotalOutOf100 => Math.Clamp(
-            Math.Round(RawCriteriaSumOutOf100 + _balancingDelta, 2, MidpointRounding.AwayFromZero),
-            0m,
-            100m);
+        public decimal RawTotalOutOf100 => IsCompletelyEmpty
+            ? 0m
+            : Math.Clamp(
+                Math.Round(RawCriteriaSumOutOf100 + _balancingDelta, 2, MidpointRounding.AwayFromZero),
+                0m,
+                100m);
 
-        public decimal WeightedScore => Math.Round((RawTotalOutOf100 / 100m) * EvaluatorWeight, 2, MidpointRounding.AwayFromZero);
+        public decimal WeightedScore => IsCompletelyEmpty
+            ? 0m
+            : Math.Round((RawTotalOutOf100 / 100m) * EvaluatorWeight, 2, MidpointRounding.AwayFromZero);
 
-        public string RawCriteriaSumDisplay => $"{RawCriteriaSumOutOf100:0.##} / 100";
-        public string RawTotalDisplay => $"{RawTotalOutOf100:0.##} / 100";
-        public string WeightedScoreDisplay => $"{WeightedScore:0.##} من {EvaluatorWeight:0.##}";
+        public string RawCriteriaSumDisplay => IsCompletelyEmpty ? "—" : $"{RawCriteriaSumOutOf100:0.##} / 100";
+        public string RawTotalDisplay => IsCompletelyEmpty ? "—" : $"{RawTotalOutOf100:0.##} / 100";
+        public string WeightedScoreDisplay => IsCompletelyEmpty ? "—" : $"{WeightedScore:0.##} من {EvaluatorWeight:0.##}";
 
         private void NotifyCalculatedFields()
         {
+            OnPropertyChanged(nameof(HasAnyEmptyCriteria));
+            OnPropertyChanged(nameof(IsCompletelyEmpty));
             OnPropertyChanged(nameof(RawCriteriaSumOutOf100));
             OnPropertyChanged(nameof(RawCriteriaSumDisplay));
             OnPropertyChanged(nameof(RawTotalOutOf100));
@@ -381,6 +420,9 @@ namespace SchoolEvaluationERP.Models
         public bool IsCountBasedEvaluation { get; set; }
         public string SystemGroupCode { get; set; } = string.Empty;
         public int MaxAllowedCount { get; set; } = 3;
+        public bool IsMonthLocked { get; set; }
+        public string LockedByUserName { get; set; } = string.Empty;
+        public string UnmatchedEmployeesWarning { get; set; } = string.Empty;
         public List<WeeklyEntrySheetModel> Sheets { get; set; } = new();
     }
 
@@ -408,4 +450,61 @@ namespace SchoolEvaluationERP.Models
         public string AverageScoreDisplay => $"{AverageRawScore:0.##} %";
         public string CreatedAtDisplay => CreatedAt.ToString("yyyy-MM-dd hh:mm tt");
     }
+
+    public class TemplateSyncEmployeeItem : INotifyPropertyChanged
+    {
+        private bool _isSelected;
+
+        public Action? OnSelectionChanged { get; set; }
+
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set
+            {
+                if (_isSelected != value)
+                {
+                    _isSelected = value;
+                    OnPropertyChanged();
+                    OnSelectionChanged?.Invoke();
+                }
+            }
+        }
+
+        public int EmployeeID { get; set; }
+        public string EvaluationName { get; set; } = string.Empty;
+        public string SystemName { get; set; } = string.Empty;
+        public string BranchName { get; set; } = string.Empty;
+        public string CategoryName { get; set; } = string.Empty;
+        public string FullJobDisplay { get; set; } = string.Empty;
+        public string SheetName { get; set; } = string.Empty;
+        public string SavedScoreDisplay { get; set; } = string.Empty;
+        public bool IsNewSheetTarget { get; set; }
+
+        public string SheetDisplay => IsNewSheetTarget ? $"{SheetName} (ورقة جديدة)" : SheetName;
+
+        public WeeklyEntrySheetModel? MatchedSavedSheet { get; set; }
+        public WeeklyEntrySheetModel? SourceLatestSheet { get; set; }
+        public WeeklyScoreRowViewModel? SourceLatestEmployeeRow { get; set; }
+
+        public WeeklyEntrySheetModel? ExistingSavedSheet { get; set; }
+        public WeeklyScoreRowViewModel? ExistingSavedEmployeeRow { get; set; }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+        protected void OnPropertyChanged([CallerMemberName] string? name = null) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+
+    public class TemplateSyncComparisonResult
+    {
+        public List<TemplateSyncEmployeeItem> NewlyAddedToTemplate { get; set; } = new();
+        public List<TemplateSyncEmployeeItem> RemovedFromTemplate { get; set; } = new();
+        public bool HasAnyDifferences => NewlyAddedToTemplate.Count > 0 || RemovedFromTemplate.Count > 0;
+    }
 }
+
+
+
+
+
+

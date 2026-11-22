@@ -16,6 +16,9 @@ namespace SchoolEvaluationERP.Views
         private List<CategoryIncentiveSettingRow> _rows = new();
         private bool _isInitializing;
 
+        private static Dictionary<int, (decimal MaxAmt, decimal MinAmt)>? _copiedIncentiveLimits;
+        private static string _copiedSourcePeriodLabel = string.Empty;
+
         public bool CanEditIncentives =>
             AuthService.CurrentSession?.HasPermission("IncentiveBasics", "update") == true ||
             AuthService.CurrentSession?.HasPermission("IncentiveBasics", "insert") == true ||
@@ -44,6 +47,22 @@ namespace SchoolEvaluationERP.Views
             BtnApplyQuickToAll.IsEnabled = canEdit;
             TxtQuickMax.IsEnabled = canEdit;
             TxtQuickMin.IsEnabled = canEdit;
+            UpdateCopyPasteButtonsState();
+        }
+
+        private void UpdateCopyPasteButtonsState()
+        {
+            if (BtnCopyIncentiveLimits == null || BtnPasteIncentiveLimits == null) return;
+
+            bool hasRows = _rows != null && _rows.Count > 0;
+            bool hasCopied = _copiedIncentiveLimits != null && _copiedIncentiveLimits.Count > 0;
+
+            BtnCopyIncentiveLimits.IsEnabled = hasRows;
+            BtnPasteIncentiveLimits.IsEnabled = CanEditIncentives && hasRows && hasCopied;
+
+            BtnPasteIncentiveLimits.ToolTip = hasCopied
+                ? $"لصق قيم الحوافز المنسوخة من شهر ({_copiedSourcePeriodLabel}) على الشهر المعروض حالياً"
+                : "انسخ قيم الحوافز من أي شهر أولاً لتفعيل زر اللصق";
         }
 
         private void InitializePeriodSelectors()
@@ -92,6 +111,7 @@ namespace SchoolEvaluationERP.Views
 
             GridCategoryIncentives.ItemsSource = _rows;
             UpdateLiveGrandTotalsKpi();
+            UpdateCopyPasteButtonsState();
         }
 
         private void UpdateLiveGrandTotalsKpi()
@@ -134,6 +154,93 @@ namespace SchoolEvaluationERP.Views
         private async void BtnReloadMonthData_Click(object sender, RoutedEventArgs e)
         {
             await LoadCategoryIncentiveRowsAsync();
+        }
+
+        private void BtnCopyIncentiveLimits_Click(object sender, RoutedEventArgs e)
+        {
+            if (_rows == null || _rows.Count == 0)
+            {
+                MessageBox.Show("لا توجد فئات لنسخ قيم الحوافز منها.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            GridCategoryIncentives.CommitEdit(DataGridEditingUnit.Cell, true);
+            GridCategoryIncentives.CommitEdit(DataGridEditingUnit.Row, true);
+
+            _copiedIncentiveLimits = _rows.ToDictionary(
+                r => r.CategoryID,
+                r => (MaxAmt: r.MaxIncentiveAmount, MinAmt: r.MinIncentiveAmount));
+
+            if (CmbYear.SelectedItem is int year && CmbMonth.SelectedValue is int month)
+            {
+                string mName = IncentiveCalculatorService.GetArabicMonthName(month);
+                _copiedSourcePeriodLabel = $"{mName} {year} م";
+            }
+            else
+            {
+                _copiedSourcePeriodLabel = "الشهر المحدد";
+            }
+
+            UpdateCopyPasteButtonsState();
+
+            MessageBox.Show(
+                $"✔ تم نسخ قيم حدود الحوافز (الحد الأعلى والأدنى) لـ ({_copiedIncentiveLimits.Count}) فئة من شهر ({_copiedSourcePeriodLabel}).\n\n" +
+                "انتقل الآن إلى الشهر الآخر واضغط (📥 لصق قيم الحوافز) ثم (💾 حفظ واعتماد حدود الحوافز للفئات).",
+                "تم نسخ قيم الحوافز",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+
+        private void BtnPasteIncentiveLimits_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CanEditIncentives)
+            {
+                MessageBox.Show("عذراً، لا تملك صلاحية تعديل أساسيات الحوافز.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (_copiedIncentiveLimits == null || _copiedIncentiveLimits.Count == 0)
+            {
+                MessageBox.Show("يرجى نسخ قيم الحوافز من شهر آخر أولاً.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (_rows == null || _rows.Count == 0)
+                return;
+
+            GridCategoryIncentives.CommitEdit(DataGridEditingUnit.Cell, true);
+            GridCategoryIncentives.CommitEdit(DataGridEditingUnit.Row, true);
+
+            int pastedCount = 0;
+            foreach (var r in _rows)
+            {
+                if (_copiedIncentiveLimits.TryGetValue(r.CategoryID, out var lim))
+                {
+                    r.MaxIncentiveAmount = lim.MaxAmt;
+                    r.MinIncentiveAmount = lim.MinAmt;
+                    pastedCount++;
+                }
+            }
+
+            if (_rows.Count > 0)
+            {
+                TxtQuickMax.Text = _rows[0].MaxIncentiveText;
+                TxtQuickMin.Text = _rows[0].MinIncentiveText;
+            }
+
+            GridCategoryIncentives.Items.Refresh();
+            UpdateLiveGrandTotalsKpi();
+
+            string targetLabel = (CmbYear.SelectedItem is int y && CmbMonth.SelectedValue is int m)
+                ? $"{IncentiveCalculatorService.GetArabicMonthName(m)} {y} م"
+                : "الشهر الحالي";
+
+            MessageBox.Show(
+                $"✔ تم لصق قيم حدود الحوافز لـ ({pastedCount}) فئة من شهر ({_copiedSourcePeriodLabel}) إلى شهر ({targetLabel}).\n\n" +
+                "راجع الإجمالي المباشر ثم اضغط (💾 حفظ واعتماد حدود الحوافز للفئات) لاعتمادها في قاعدة البيانات.",
+                "تم لصق قيم الحوافز",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
         private bool TryReadQuickLimits(out decimal maxVal, out decimal minVal)
@@ -230,3 +337,7 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 using Microsoft.Win32;
 using SchoolEvaluationERP.Models;
 using SchoolEvaluationERP.Services;
@@ -14,6 +15,7 @@ namespace SchoolEvaluationERP.Views
     {
         private readonly FinalReportService _reportService = new();
         private readonly MasterDataService _masterService = new();
+        private readonly MonthlyPeriodConfigService _periodService = new();
         private MonthlyFinalReportSummary? _currentReport;
         private bool _isInitializing;
 
@@ -101,6 +103,130 @@ namespace SchoolEvaluationERP.Views
             TxtKpiDeservingCount.Text = $"{_currentReport.DeservingEmployeesCount} مستحق";
             TxtKpiAverageScore.Text = $"{_currentReport.OverallAverageScore:0.##} %";
             TxtKpiTotalPayout.Text = $"{_currentReport.TotalIncentivePayout:N0} ريال";
+
+            UpdateReportLockVisualState();
+        }
+
+        private void UpdateReportLockVisualState()
+        {
+            if (_currentReport == null) return;
+
+            bool isLocked = _currentReport.IsMonthLocked;
+            bool isAdmin = AuthService.CurrentSession?.IsAdmin == true;
+            bool canEditReport = isAdmin
+                || AuthService.CurrentSession?.HasPermission("FinalReport", "update") == true
+                || AuthService.CurrentSession?.HasPermission("FinalReport", "insert") == true;
+
+            TxtReportPeriodStatus.Text = string.IsNullOrWhiteSpace(_currentReport.EffectiveConfigPeriodLabel)
+                ? "حالة الفترة: مفتوح للاحتساب"
+                : _currentReport.EffectiveConfigPeriodLabel;
+
+            if (isLocked)
+            {
+                BadgeReportPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(254, 242, 242));
+                BadgeReportPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(254, 202, 202));
+                TxtReportPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28));
+            }
+            else
+            {
+                BadgeReportPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(239, 246, 255));
+                BadgeReportPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(191, 219, 254));
+                TxtReportPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175));
+            }
+
+            BtnLockMonth.Visibility = (!isLocked && canEditReport) ? Visibility.Visible : Visibility.Collapsed;
+            BtnUnlockMonth.Visibility = (isLocked && isAdmin) ? Visibility.Visible : Visibility.Collapsed;
+            BtnRebuildMonthConfig.Visibility = (!isLocked && canEditReport) ? Visibility.Visible : Visibility.Collapsed;
+
+            TxtDebitAccount.IsReadOnly = isLocked;
+            ChkRoundTo50.IsEnabled = !isLocked;
+        }
+
+        private async void BtnLockMonth_Click(object sender, RoutedEventArgs e)
+        {
+            if (CmbYear.SelectedItem is not int year || CmbMonth.SelectedValue is not int month)
+                return;
+
+            string mName = IncentiveCalculatorService.GetArabicMonthName(month);
+            var confirm = MessageBox.Show(
+                $"هل أنت متأكد من اعتماد وإغلاق شهر ({mName} {year} م) نهائياً؟\n\n" +
+                "• سيتم حفظ وتجميد نسخة كاملة من القيد المحاسبي ودرجات وحوافز هذا الشهر.\n" +
+                "• لن يتأثر هذا الشهر بأي تعديلات لاحقة في المقيمين أو الفئات أو الموظفين.\n" +
+                "• سيُمنع تعديل درجات أو حوافز هذا الشهر ما لم يقم مدير النظام بفك الإغلاق.",
+                "تأكيد اعتماد وإغلاق الشهر المالي",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            string debitTitle = string.IsNullOrWhiteSpace(TxtDebitAccount.Text)
+                ? AppConfigService.DefaultDebitAccountName
+                : TxtDebitAccount.Text.Trim();
+            bool round50 = ChkRoundTo50.IsChecked == true;
+
+            BtnLockMonth.IsEnabled = false;
+            var (ok, msg) = await _reportService.LockMonthReportAsync(
+                year,
+                month,
+                debitTitle,
+                AppConfigService.DefaultMaxIncentiveAmount,
+                AppConfigService.DefaultMinIncentiveAmount,
+                round50);
+            BtnLockMonth.IsEnabled = true;
+
+            MessageBox.Show(msg, ok ? "تم اعتماد وإغلاق الشهر" : "تنبيه", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+            if (ok) await RefreshReportAsync();
+        }
+
+        private async void BtnUnlockMonth_Click(object sender, RoutedEventArgs e)
+        {
+            if (CmbYear.SelectedItem is not int year || CmbMonth.SelectedValue is not int month)
+                return;
+
+            string mName = IncentiveCalculatorService.GetArabicMonthName(month);
+            var confirm = MessageBox.Show(
+                $"هل تريد فك إغلاق شهر ({mName} {year} م)؟\nسيعود التقرير للاحتساب الحي وفق أساسيات الشهر وسيُسمح بالتعديل مجدداً.",
+                "تأكيد فك إغلاق الشهر",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            BtnUnlockMonth.IsEnabled = false;
+            var (ok, msg) = await _reportService.UnlockMonthReportAsync(year, month);
+            BtnUnlockMonth.IsEnabled = true;
+
+            MessageBox.Show(msg, ok ? "تم فك إغلاق الشهر" : "تنبيه", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+            if (ok) await RefreshReportAsync();
+        }
+
+        private async void BtnRebuildMonthConfig_Click(object sender, RoutedEventArgs e)
+        {
+            if (CmbYear.SelectedItem is not int year || CmbMonth.SelectedValue is not int month)
+                return;
+
+            string mName = IncentiveCalculatorService.GetArabicMonthName(month);
+            var confirm = MessageBox.Show(
+                $"ستقوم هذه الأداة باسترجاع وبناء أوزان الفئات وإسناد الموظفين لشهر ({mName} {year} م) من التقييمات الشهرية المحفوظة فيه وإعادة احتساب التقرير فوراً.\n\n" +
+                "(ممتاز لإنقاذ أشهر 7 و 8 و 9 وإعادة قيودها كما كانت قبل تعديلات شهر 10).\n\nهل تريد المتابعة؟",
+                "استرجاع أساسيات الشهر من التقييمات المحفوظة",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+
+            if (confirm != MessageBoxResult.Yes) return;
+
+            BtnRebuildMonthConfig.IsEnabled = false;
+            var (ok, msg) = await _periodService.RebuildMonthConfigFromSavedEvaluationsAsync(year, month);
+            BtnRebuildMonthConfig.IsEnabled = true;
+
+            MessageBox.Show(msg, ok ? "تم استرجاع أساسيات الشهر" : "تنبيه", MessageBoxButton.OK,
+                ok ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+            if (ok) await RefreshReportAsync();
         }
 
         private async void BtnCalculateReport_Click(object sender, RoutedEventArgs e)
@@ -214,3 +340,6 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+

@@ -293,9 +293,7 @@ namespace SchoolEvaluationERP.Models
                 SortOrder = sortOrder
             };
 
-            sheet.CriteriaColumns.Add(new CriteriaColumnModel { CriteriaTitle = "قواعد التقييم 1", MaxScore = 0m, ColumnOrder = 1 });
-            sheet.CriteriaColumns.Add(new CriteriaColumnModel { CriteriaTitle = "قواعد التقييم 2", MaxScore = 0m, ColumnOrder = 2 });
-            sheet.CriteriaColumns.Add(new CriteriaColumnModel { CriteriaTitle = "قواعد التقييم 3", MaxScore = 0m, ColumnOrder = 3 });
+            sheet.CriteriaColumns.Add(new CriteriaColumnModel { CriteriaTitle = "أساسيات التقييم", MaxScore = 100m, ColumnOrder = 1 });
 
             return sheet;
         }
@@ -363,4 +361,5 @@ namespace SchoolEvaluationERP.Models
         public List<EvaluatorEmployeeExportRowDto> Employees { get; set; } = new();
     }
 }
+
 

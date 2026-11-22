@@ -53,11 +53,20 @@
 
                         <Border Grid.Row="1" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
                             <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="🔍 بحث باسم المقيم أو المجموعة:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,8,4"/>
-                                <TextBox x:Name="TxtSearchTemplateEvaluator" Style="{StaticResource ModernTextBox}" Width="240" Height="35" Margin="0,2,8,4"
+                                <TextBlock Text="📅 معاينة وتصدير شهر:" FontWeight="Bold" Foreground="#1E3A8A" VerticalAlignment="Center" Margin="0,2,6,4"/>
+                                <ComboBox x:Name="CmbTemplatePreviewYear" Style="{StaticResource ModernComboBox}" Width="88" Height="35" Margin="0,2,6,4"
+                                          ToolTip="تحديد السنة لمعاينة وتصدير القوالب حسب إسناد الموظفين فيها"
+                                          SelectionChanged="TemplatePeriodFilter_SelectionChanged"/>
+                                <ComboBox x:Name="CmbTemplatePreviewMonth" Style="{StaticResource ModernComboBox}" Width="135" Height="35" Margin="0,2,14,4"
+                                          DisplayMemberPath="DisplayText" SelectedValuePath="MonthNumber"
+                                          ToolTip="تحديد الشهر لمعاينة وتصدير القوالب حسب إسناد الموظفين فيه"
+                                          SelectionChanged="TemplatePeriodFilter_SelectionChanged"/>
+
+                                <TextBlock Text="🔍 بحث:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,6,4"/>
+                                <TextBox x:Name="TxtSearchTemplateEvaluator" Style="{StaticResource ModernTextBox}" Width="210" Height="35" Margin="0,2,8,4"
                                          ToolTip="اكتب اسم المقيم أو اسم مجموعته لفلترة القوالب..."
                                          TextChanged="TxtSearchTemplateEvaluator_TextChanged"/>
-                                <Button Content="عرض الكل" Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,2,14,4" Click="BtnResetTemplateSearch_Click"/>
+                                <Button Content="عرض الكل" Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,2,12,4" Click="BtnResetTemplateSearch_Click"/>
                                 <TextBlock x:Name="TxtTemplatesCountBadge" Text="إجمالي القوالب الفعالة: 0" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" VerticalAlignment="Center" Margin="0,2,0,4"/>
                             </WrapPanel>
                         </Border>
@@ -161,9 +170,15 @@
                                     </Border>
 
                                     <Button Content="⚖ توزيع الـ 100 درجة بالتساوي"
-                                            Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12" VerticalAlignment="Center" Margin="0,0,0,4"
+                                            Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,4"
                                             ToolTip="توزيع 100 درجة صحيحة بالتساوي على جميع أعمدة الورقة الحالية"
                                             Click="BtnDistributeCriteriaEqually_Click"/>
+
+                                    <Button x:Name="BtnCopyCriteriaToAllSheets" Content="📋 تعميم أعمدة هذه الورقة على كل الأوراق"
+                                            Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12" VerticalAlignment="Center" Margin="0,0,0,4"
+                                            Background="#EFF6FF" BorderBrush="#93C5FD" Foreground="#1E40AF" FontWeight="Bold"
+                                            ToolTip="نسخ أعمدة مبادئ التقييم ودرجاتها من الورقة الحالية إلى جميع أوراق القالب الأخرى دفعة واحدة"
+                                            Click="BtnCopyCriteriaToAllSheets_Click"/>
                                 </WrapPanel>
 
                                 <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
@@ -226,9 +241,7 @@
                                             Style="{StaticResource PrimaryButton}" Height="32" Padding="10,0" FontSize="12" Margin="0,0,6,0"
                                             Click="BtnAddNewSheetTab_Click"/>
 
-                                    <Button Content="✏ تعديل الورقة"
-                                            Style="{StaticResource SecondaryButton}" Height="32" Padding="10,0" FontSize="12" Margin="0,0,6,0"
-                                            Click="BtnRenameCurrentSheet_Click"/>
+
 
                                     <Button Content="🗑 حذف الورقة"
                                             Style="{StaticResource DangerButton}" Height="32" Padding="10,0" FontSize="12"
@@ -242,3 +255,6 @@
         </TabControl>
     </Grid>
 </UserControl>
+
+
+

@@ -137,14 +137,14 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- 1: شريط البحث السريع عن موظف داخل الورقة المفتوحة -->
+                        <!-- 1: شريط البحث السريع عن موظف في جميع أوراق القالب -->
                         <Border Grid.Row="1" Background="#FFFFFF" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="10,8" Margin="0,0,0,8">
                             <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="🔍 فلترة الموظفين داخل الورقة:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,8,4"/>
-                                <TextBox x:Name="TxtFilterSheetEmployee" Style="{StaticResource ModernTextBox}" Width="240" Height="34" Margin="0,2,8,4"
-                                         ToolTip="اكتب اسم الموظف أو الفرع أو الوظيفة للبحث داخل هذه الورقة..."
+                                <TextBlock Text="🔍 بحث عن الموظفين في جميع أوراق القالب:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,8,4"/>
+                                <TextBox x:Name="TxtFilterSheetEmployee" Style="{StaticResource ModernTextBox}" Width="260" Height="34" Margin="0,2,8,4"
+                                         ToolTip="ابحث باسم الموظف أو الفرع أو الوظيفة أو اسم الورقة عبر جميع أوراق القالب دفعة واحدة..."
                                          TextChanged="TxtFilterSheetEmployee_TextChanged"/>
-                                <Button Content="إظهار كل موظفي الورقة" Style="{StaticResource SecondaryButton}" Height="34" Padding="10,0" FontSize="12" Margin="0,2,14,4"
+                                <Button Content="مسح البحث وإظهار الورقة" Style="{StaticResource SecondaryButton}" Height="34" Padding="10,0" FontSize="12" Margin="0,2,14,4"
                                         Click="BtnClearSheetEmployeeFilter_Click"/>
                                 <TextBlock x:Name="TxtDetailEmployeesCount" Text="عدد الموظفين: 0" FontWeight="SemiBold" Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center" Margin="0,2,0,4"/>
                             </WrapPanel>
@@ -157,7 +157,8 @@
                                   SelectionMode="Extended"
                                   SelectionUnit="FullRow"
                                   HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollBarVisibility="Auto"/>
+                                  VerticalScrollBarVisibility="Auto"
+                                  MouseDoubleClick="GridRecordSheetScores_MouseDoubleClick"/>
 
                         <!-- 3: الشريط السفلي لأوراق التقييم المحفوظ -->
                         <Border Grid.Row="3" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1.5" CornerRadius="8" Padding="12,8" Margin="0,8,0,0">
@@ -187,3 +188,4 @@
         </TabControl>
     </Grid>
 </UserControl>
+

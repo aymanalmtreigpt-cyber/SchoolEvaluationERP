@@ -56,7 +56,9 @@ namespace SchoolEvaluationERP.Services
             return true;
         }
 
-        public async Task<List<EvaluatorDto>> SearchEvaluatorsAsync(string query = "")
+        private static readonly SemaphoreSlim _autoCategorySheetLock = new(1, 1);
+
+        public async Task<List<EvaluatorDto>> SearchEvaluatorsAsync(string query = "", bool excludeSystemGroups = false)
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
@@ -64,19 +66,198 @@ namespace SchoolEvaluationERP.Services
             string sql = @"
                 SELECT ev.EvaluatorID, ev.GroupID, eg.GroupName, ev.EvaluatorName,
                        (SELECT COUNT(1) FROM dbo.CategoryEvaluatorGroups ceg WHERE ceg.GroupID = ev.GroupID) AS AssignedCategoriesCount,
-                       (SELECT COUNT(1) FROM dbo.EmployeeEvaluators ee INNER JOIN dbo.Employees e ON ee.EmployeeID = e.EmployeeID WHERE ee.EvaluatorID = ev.EvaluatorID AND e.IsActive = 1 AND e.IsContinuing = 1) AS AssignedEmployeesCount
+                       (SELECT COUNT(1) FROM dbo.EmployeeEvaluators ee INNER JOIN dbo.Employees e ON ee.EmployeeID = e.EmployeeID WHERE ee.EvaluatorID = ev.EvaluatorID AND e.IsActive = 1 AND e.IsContinuing = 1) AS AssignedEmployeesCount,
+                       ISNULL((
+                           SELECT TOP 1 t.TemplateID
+                           FROM dbo.Templates t
+                           WHERE t.EvaluatorID = ev.EvaluatorID AND t.IsCurrentVersion = 1 AND t.IsDeleted = 0
+                           ORDER BY t.TemplateID DESC
+                       ), 0) AS ExistingTemplateID
                 FROM dbo.Evaluators ev
                 INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
                 WHERE ev.IsActive = 1 AND eg.IsActive = 1
+                  AND (@ExcludeSys = 0 OR ISNULL(eg.IsSystemGroup, 0) = 0)
                   AND (@Q = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
-                ORDER BY ISNULL(eg.IsSystemGroup, 0) DESC, eg.GroupName ASC, ev.EvaluatorName ASC";
+                ORDER BY
+                    CASE WHEN EXISTS (SELECT 1 FROM dbo.Templates t2 WHERE t2.EvaluatorID = ev.EvaluatorID AND t2.IsCurrentVersion = 1 AND t2.IsDeleted = 0) THEN 1 ELSE 0 END ASC,
+                    ISNULL(eg.IsSystemGroup, 0) DESC,
+                    eg.GroupName ASC,
+                    ev.EvaluatorName ASC";
 
             var list = await conn.QueryAsync<EvaluatorDto>(sql, new
             {
                 Q = (query ?? string.Empty).Trim(),
-                Pattern = $"%{(query ?? string.Empty).Trim()}%"
+                Pattern = $"%{(query ?? string.Empty).Trim()}%",
+                ExcludeSys = excludeSystemGroups ? 1 : 0
             });
             return list.ToList();
+        }
+
+        public static async Task EnsureMissingCategorySheetsForTemplateAsync(
+            SqlConnection conn,
+            int templateId,
+            int evaluatorId,
+            int year,
+            int month)
+        {
+            if (templateId <= 0 || evaluatorId <= 0) return;
+
+            await _autoCategorySheetLock.WaitAsync();
+            try
+            {
+                var tmplInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                    SELECT t.TemplateID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                    FROM dbo.Templates t
+                    INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                    LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                    WHERE t.TemplateID = @TID AND t.IsDeleted = 0", new { TID = templateId });
+
+                if (tmplInfo == null || Convert.ToBoolean(tmplInfo.IsSystemGroup))
+                    return;
+
+                var contEmps = await LoadEffectiveContinuingEmployeesAsync(conn, year, month);
+                var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+                var assignedToEval = effAssigns
+                    .Where(a => a.EvaluatorID == evaluatorId)
+                    .Select(a => a.EmployeeID)
+                    .ToHashSet();
+
+                if (assignedToEval.Count == 0)
+                    return;
+
+                var excludedEmpIds = (await conn.QueryAsync<int>(
+                    "SELECT EmployeeID FROM dbo.TemplateExcludedEmployees WHERE EvaluatorID = @EvalID",
+                    new { EvalID = evaluatorId })).ToHashSet();
+
+                var eligibleEmps = contEmps
+                    .Where(e => assignedToEval.Contains(e.EmployeeID) && !excludedEmpIds.Contains(e.EmployeeID))
+                    .ToList();
+
+                if (eligibleEmps.Count == 0)
+                    return;
+
+                var existingSheets = (await conn.QueryAsync<dynamic>(@"
+                    SELECT SheetID, TargetCategoryID, TargetBranchID, SortOrder
+                    FROM dbo.TemplateSheets
+                    WHERE TemplateID = @TID", new { TID = templateId })).ToList();
+
+                int maxSortOrder = existingSheets.Count > 0 ? existingSheets.Max(s => (int)s.SortOrder) : 0;
+
+                var uncoveredByCategory = eligibleEmps
+                    .Where(emp => !existingSheets.Any(sh =>
+                        sh.TargetCategoryID != null &&
+                        (int)sh.TargetCategoryID == emp.CategoryID &&
+                        (sh.TargetBranchID == null || (int)sh.TargetBranchID <= 0 || (int)sh.TargetBranchID == emp.BranchID)))
+                    .GroupBy(emp => emp.CategoryID)
+                    .OrderBy(g => g.Key)
+                    .ToList();
+
+                if (uncoveredByCategory.Count == 0)
+                    return;
+
+                foreach (var catGroup in uncoveredByCategory)
+                {
+                    int catId = catGroup.Key;
+                    string catName = catGroup.First().CategoryName;
+                    maxSortOrder++;
+
+                    int newSheetId = await conn.ExecuteScalarAsync<int>(@"
+                        INSERT INTO dbo.TemplateSheets
+                            (TemplateID, SheetName, TargetCategoryID, TargetBranchID, TargetCategoryName, SortOrder)
+                        VALUES
+                            (@TID, @Name, @CatID, NULL, @CatName, @SortOrder);
+                        SELECT CAST(SCOPE_IDENTITY() AS INT);",
+                        new
+                        {
+                            TID = templateId,
+                            Name = catName,
+                            CatID = catId,
+                            CatName = catName,
+                            SortOrder = maxSortOrder
+                        });
+
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO dbo.SheetCriteria (SheetID, CriteriaTitle, MaxScore, ColumnOrder)
+                        VALUES (@SheetID, N'أساسيات التقييم', 100, 1);",
+                        new { SheetID = newSheetId });
+
+                    var orderedEmps = catGroup
+                        .OrderBy(e => e.BranchName)
+                        .ThenBy(e => e.EvaluationName)
+                        .ToList();
+
+                    for (int i = 0; i < orderedEmps.Count; i++)
+                    {
+                        await conn.ExecuteAsync(@"
+                            INSERT INTO dbo.SheetEmployees (SheetID, EmployeeID, RowOrder)
+                            VALUES (@SheetID, @EmpID, @Ord);",
+                            new { SheetID = newSheetId, EmpID = orderedEmps[i].EmployeeID, Ord = i + 1 });
+                    }
+                }
+            }
+            finally
+            {
+                _autoCategorySheetLock.Release();
+            }
+        }
+
+        public async Task<TemplateFullModel?> BuildAutoTemplateForEvaluatorAsync(
+            EvaluatorDto evaluator,
+            int? evalYear = null,
+            int? evalMonth = null)
+        {
+            if (evaluator == null || evaluator.EvaluatorID <= 0)
+                return null;
+
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
+            var categories = await GetCategoriesForEvaluatorAsync(evaluator.EvaluatorID, year, month);
+            var nonEmptyCategories = categories.Where(c => c.AssignedEmployeesCount > 0).ToList();
+            if (nonEmptyCategories.Count == 0)
+                return null;
+
+            var excludedEmpIds = (await conn.QueryAsync<int>(
+                "SELECT EmployeeID FROM dbo.TemplateExcludedEmployees WHERE EvaluatorID = @EvalID",
+                new { EvalID = evaluator.EvaluatorID })).ToHashSet();
+
+            var model = new TemplateFullModel
+            {
+                TemplateID = 0,
+                TemplateGroupGuid = Guid.NewGuid(),
+                EvaluatorID = evaluator.EvaluatorID,
+                EvaluatorName = evaluator.EvaluatorName,
+                GroupName = evaluator.GroupName,
+                VersionNumber = 1
+            };
+
+            int sortOrder = 1;
+            foreach (var cat in nonEmptyCategories)
+            {
+                var eligible = await GetEligibleEmployeesForSheetAsync(cat.CategoryID, null, evaluator.EvaluatorID, year, month);
+                var activeRows = eligible.Where(e => !excludedEmpIds.Contains(e.EmployeeID)).ToList();
+                if (activeRows.Count == 0)
+                    continue;
+
+                var sheet = TemplateSheetModel.CreateDefault(
+                    cat.CategoryName,
+                    cat.CategoryID,
+                    cat.CategoryName,
+                    null,
+                    "جميع الفروع (كلاهما)",
+                    sortOrder++);
+
+                for (int i = 0; i < activeRows.Count; i++)
+                {
+                    activeRows[i].RowOrder = i + 1;
+                    sheet.EmployeeRows.Add(activeRows[i]);
+                }
+
+                model.Sheets.Add(sheet);
+            }
+
+            return model.Sheets.Count > 0 ? model : null;
         }
 
         public async Task<bool> HasAnyActiveCategoriesAsync()
@@ -87,54 +268,163 @@ namespace SchoolEvaluationERP.Services
             return count > 0;
         }
 
-        public async Task<List<TemplateCategoryOptionDto>> GetCategoriesForEvaluatorAsync(int evaluatorId)
+        private static async Task<(int Year, int Month)> ResolvePeriodOrLatestAsync(
+            SqlConnection conn, int? evalYear, int? evalMonth, SqlTransaction? tx = null)
         {
-            using var conn = new SqlConnection(_connectionString);
-            await EnsureSchemaUpToDateAsync(conn);
-
-            string sql = @"
-                SELECT c.CategoryID,
-                       c.CategoryName,
-                       (SELECT COUNT(1)
-                        FROM dbo.Employees e
-                        WHERE e.IsActive = 1
-                          AND e.IsContinuing = 1
-                          AND e.CategoryID = c.CategoryID
-                          AND (
-                              EXISTS (SELECT 1 FROM dbo.EmployeeEvaluators ee WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID)
-                              OR ISNULL(eg.IsSystemGroup, 0) = 1
-                          )) AS AssignedEmployeesCount
-                FROM dbo.Categories c
-                INNER JOIN dbo.CategoryEvaluatorGroups ceg ON ceg.CategoryID = c.CategoryID
-                INNER JOIN dbo.Evaluators ev ON ev.GroupID = ceg.GroupID
-                INNER JOIN dbo.EvaluatorGroups eg ON eg.GroupID = ev.GroupID
-                WHERE c.IsActive = 1 AND ev.EvaluatorID = @EvalID
-                ORDER BY c.CategoryID ASC";
-
-            var list = await conn.QueryAsync<TemplateCategoryOptionDto>(sql, new { EvalID = evaluatorId });
-            return list.ToList();
+            if (evalYear.HasValue && evalMonth.HasValue &&
+                evalYear.Value >= 2020 && evalYear.Value <= 2100 &&
+                evalMonth.Value >= 1 && evalMonth.Value <= 12)
+            {
+                return (evalYear.Value, evalMonth.Value);
+            }
+            return await MonthlyPeriodConfigService.GetLatestConfiguredPeriodAsync(conn, tx);
         }
 
-        public async Task<List<TemplateBranchOptionDto>> GetBranchOptionsForEvaluatorCategoryAsync(int evaluatorId, int categoryId)
+        private class ActiveEmployeeBaseRow
+        {
+            public int EmployeeID { get; set; }
+            public string EvaluationName { get; set; } = string.Empty;
+            public string SystemName { get; set; } = string.Empty;
+            public int BranchID { get; set; }
+            public string BranchName { get; set; } = string.Empty;
+            public int CategoryID { get; set; }
+            public string CategoryName { get; set; } = string.Empty;
+            public string JobTitle { get; set; } = string.Empty;
+            public string JobTypeName { get; set; } = string.Empty;
+            public bool HasIncentive { get; set; }
+            public bool IsContinuing { get; set; }
+        }
+
+        private static async Task<List<ActiveEmployeeBaseRow>> LoadEffectiveContinuingEmployeesAsync(
+            SqlConnection conn, int year, int month, SqlTransaction? tx = null)
+        {
+            var rawEmps = (await conn.QueryAsync<ActiveEmployeeBaseRow>(@"
+                SELECT e.EmployeeID, e.EvaluationName, e.SystemName,
+                       e.BranchID, b.BranchName,
+                       e.CategoryID, c.CategoryName,
+                       j.JobTitle, jt.JobTypeName,
+                       e.HasIncentive, e.IsContinuing
+                FROM dbo.Employees e
+                INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
+                INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
+                INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
+                INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
+                WHERE e.IsActive = 1", transaction: tx)).ToList();
+
+            var catNameMap = (await conn.QueryAsync<dynamic>("SELECT CategoryID, CategoryName FROM dbo.Categories", transaction: tx))
+                .ToDictionary(x => (int)x.CategoryID, x => (string)x.CategoryName);
+
+            var snaps = await MonthlyPeriodConfigService.GetEffectiveEmployeeSnapshotsAsync(conn, year, month, tx);
+
+            var result = new List<ActiveEmployeeBaseRow>();
+            foreach (var emp in rawEmps)
+            {
+                if (snaps.TryGetValue(emp.EmployeeID, out var snap))
+                {
+                    emp.CategoryID = snap.CategoryID;
+                    if (catNameMap.TryGetValue(snap.CategoryID, out var cName))
+                        emp.CategoryName = cName;
+                    emp.HasIncentive = snap.HasIncentive;
+                    emp.IsContinuing = snap.IsContinuing;
+                }
+
+                if (emp.IsContinuing)
+                    result.Add(emp);
+            }
+            return result;
+        }
+
+        private static decimal ComputeEvaluatorWeightForEmployee(
+            int employeeId,
+            int categoryId,
+            int groupId,
+            bool isSystemGroup,
+            Dictionary<(int CatID, int GroupID), decimal> weightMap,
+            Dictionary<(int EmpID, int GroupID), int> assignedCountByEmpGroup)
+        {
+            if (!weightMap.TryGetValue((categoryId, groupId), out decimal grpWeight) || grpWeight <= 0m)
+                return 0m;
+
+            if (isSystemGroup)
+                return Math.Round(grpWeight, 2, MidpointRounding.AwayFromZero);
+
+            if (!assignedCountByEmpGroup.TryGetValue((employeeId, groupId), out int cnt) || cnt <= 0)
+                return 0m;
+
+            return Math.Round(grpWeight / cnt, 2, MidpointRounding.AwayFromZero);
+        }
+
+        public async Task<List<TemplateCategoryOptionDto>> GetCategoriesForEvaluatorAsync(
+            int evaluatorId, int? evalYear = null, int? evalMonth = null)
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
+            var evalInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT ev.GroupID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                FROM dbo.Evaluators ev
+                INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE ev.EvaluatorID = @EvalID", new { EvalID = evaluatorId });
+
+            if (evalInfo == null) return new List<TemplateCategoryOptionDto>();
+            int groupId = (int)evalInfo.GroupID;
+            bool isSys = Convert.ToBoolean(evalInfo.IsSystemGroup);
+
+            var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var allowedCatIds = effWeights.Where(w => w.GroupID == groupId).Select(w => w.CategoryID).Distinct().ToHashSet();
+            if (allowedCatIds.Count == 0) return new List<TemplateCategoryOptionDto>();
+
+            var categories = (await conn.QueryAsync<TemplateCategoryOptionDto>(@"
+                SELECT CategoryID, CategoryName
+                FROM dbo.Categories
+                WHERE IsActive = 1 AND CategoryID IN @CatIDs
+                ORDER BY CategoryID ASC", new { CatIDs = allowedCatIds })).ToList();
+
+            var contEmps = await LoadEffectiveContinuingEmployeesAsync(conn, year, month);
+            var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+            var assignedToEval = effAssigns.Where(a => a.EvaluatorID == evaluatorId).Select(a => a.EmployeeID).ToHashSet();
+
+            foreach (var cat in categories)
+            {
+                cat.AssignedEmployeesCount = contEmps.Count(e =>
+                    e.CategoryID == cat.CategoryID && (isSys || assignedToEval.Contains(e.EmployeeID)));
+            }
+
+            return categories;
+        }
+
+        public async Task<List<TemplateBranchOptionDto>> GetBranchOptionsForEvaluatorCategoryAsync(
+            int evaluatorId, int categoryId, int? evalYear = null, int? evalMonth = null)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
+            var evalInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                FROM dbo.Evaluators ev
+                INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE ev.EvaluatorID = @EvalID", new { EvalID = evaluatorId });
+            bool isSys = evalInfo != null && Convert.ToBoolean(evalInfo.IsSystemGroup);
 
             var branches = (await conn.QueryAsync<TemplateBranchOptionDto>(@"
-                SELECT b.BranchID,
-                       b.BranchName,
-                       (SELECT COUNT(1)
-                        FROM dbo.Employees e
-                        INNER JOIN dbo.EmployeeEvaluators ee ON ee.EmployeeID = e.EmployeeID
-                        WHERE e.IsActive = 1
-                          AND e.IsContinuing = 1
-                          AND e.CategoryID = @CatID
-                          AND e.BranchID = b.BranchID
-                          AND ee.EvaluatorID = @EvalID) AS AssignedEmployeesCount
-                FROM dbo.Branches b
-                WHERE b.IsActive = 1
-                ORDER BY b.BranchID ASC",
-                new { CatID = categoryId, EvalID = evaluatorId })).ToList();
+                SELECT BranchID, BranchName
+                FROM dbo.Branches
+                WHERE IsActive = 1
+                ORDER BY BranchID ASC")).ToList();
+
+            var contEmps = await LoadEffectiveContinuingEmployeesAsync(conn, year, month);
+            var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+            var assignedToEval = effAssigns.Where(a => a.EvaluatorID == evaluatorId).Select(a => a.EmployeeID).ToHashSet();
+
+            var matchingEmps = contEmps.Where(e =>
+                e.CategoryID == categoryId && (isSys || assignedToEval.Contains(e.EmployeeID))).ToList();
+
+            foreach (var b in branches)
+            {
+                b.AssignedEmployeesCount = matchingEmps.Count(e => e.BranchID == b.BranchID);
+            }
 
             int totalAcrossAll = branches.Sum(b => b.AssignedEmployeesCount);
 
@@ -154,10 +444,13 @@ namespace SchoolEvaluationERP.Services
         public async Task<List<SheetEmployeeRowModel>> GetEligibleEmployeesForSheetAsync(
             int? targetCategoryId,
             int? targetBranchId,
-            int evaluatorId)
+            int evaluatorId,
+            int? evalYear = null,
+            int? evalMonth = null)
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
 
             var evalGroupInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
                 SELECT ev.GroupID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
@@ -165,79 +458,64 @@ namespace SchoolEvaluationERP.Services
                 INNER JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
                 WHERE ev.EvaluatorID = @EvalID", new { EvalID = evaluatorId });
 
-            bool isSystemGroup = evalGroupInfo != null && Convert.ToBoolean(evalGroupInfo.IsSystemGroup);
-            int groupId = evalGroupInfo != null ? (int)evalGroupInfo.GroupID : 0;
+            if (evalGroupInfo == null) return new List<SheetEmployeeRowModel>();
 
+            bool isSystemGroup = Convert.ToBoolean(evalGroupInfo.IsSystemGroup);
+            int groupId = (int)evalGroupInfo.GroupID;
+
+            var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var weightMap = effWeights.ToDictionary(w => (w.CategoryID, w.GroupID), w => w.WeightScore);
+            var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+            var assignedToEval = effAssigns.Where(a => a.EvaluatorID == evaluatorId).Select(a => a.EmployeeID).ToHashSet();
+            var assignedCountByEmpGroup = effAssigns
+                .GroupBy(a => (a.EmployeeID, a.GroupID))
+                .ToDictionary(g => g.Key, g => g.Select(x => x.EvaluatorID).Distinct().Count());
+
+            var contEmps = await LoadEffectiveContinuingEmployeesAsync(conn, year, month);
+
+            IEnumerable<ActiveEmployeeBaseRow> filtered;
             if (isSystemGroup)
             {
-                string sysSql = @"
-                    SELECT e.EmployeeID, e.EvaluationName, e.SystemName,
-                           e.BranchID, b.BranchName,
-                           j.JobTitle, jt.JobTypeName,
-                           c.CategoryName,
-                           e.HasIncentive, e.IsContinuing,
-                           ceg.WeightScore AS EvaluatorWeightForEmployee
-                    FROM dbo.Employees e
-                    INNER JOIN dbo.CategoryEvaluatorGroups ceg ON e.CategoryID = ceg.CategoryID AND ceg.GroupID = @GID
-                    INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
-                    INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                    INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
-                    INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
-                    WHERE e.IsActive = 1
-                      AND e.IsContinuing = 1
-                    ORDER BY c.CategoryID ASC, b.BranchName ASC, e.EvaluationName ASC";
+                var sysCatIds = effWeights.Where(w => w.GroupID == groupId).Select(w => w.CategoryID).ToHashSet();
+                filtered = contEmps
+                    .Where(e => sysCatIds.Contains(e.CategoryID))
+                    .OrderBy(e => e.CategoryID).ThenBy(e => e.BranchName).ThenBy(e => e.EvaluationName);
+            }
+            else
+            {
+                if (targetCategoryId == null || targetCategoryId <= 0)
+                    return new List<SheetEmployeeRowModel>();
 
-                var sysList = await conn.QueryAsync<SheetEmployeeRowModel>(sysSql, new { GID = groupId });
-                return sysList.ToList();
+                int? effectiveBranchId = (targetBranchId.HasValue && targetBranchId.Value > 0) ? targetBranchId.Value : null;
+                filtered = contEmps
+                    .Where(e => assignedToEval.Contains(e.EmployeeID)
+                                && e.CategoryID == targetCategoryId.Value
+                                && (!effectiveBranchId.HasValue || e.BranchID == effectiveBranchId.Value))
+                    .OrderBy(e => e.BranchName).ThenBy(e => e.EvaluationName);
             }
 
-            if (targetCategoryId == null || targetCategoryId <= 0)
-                return new List<SheetEmployeeRowModel>();
-
-            int? effectiveBranchId = (targetBranchId.HasValue && targetBranchId.Value > 0) ? targetBranchId.Value : null;
-
-            string sql = @"
-                SELECT e.EmployeeID, e.EvaluationName, e.SystemName,
-                       e.BranchID, b.BranchName,
-                       j.JobTitle, jt.JobTypeName,
-                       c.CategoryName,
-                       e.HasIncentive, e.IsContinuing,
-                       ISNULL((
-                           SELECT CAST(ROUND(ceg.WeightScore / NULLIF((
-                               SELECT COUNT(1)
-                               FROM dbo.EmployeeEvaluators ee2
-                               INNER JOIN dbo.Evaluators ev2 ON ee2.EvaluatorID = ev2.EvaluatorID
-                               WHERE ee2.EmployeeID = e.EmployeeID
-                                 AND ev2.GroupID = ev_curr.GroupID
-                                 AND ev2.IsActive = 1
-                           ), 0), 2) AS DECIMAL(5,2))
-                           FROM dbo.Evaluators ev_curr
-                           INNER JOIN dbo.CategoryEvaluatorGroups ceg
-                               ON ceg.GroupID = ev_curr.GroupID AND ceg.CategoryID = e.CategoryID
-                           WHERE ev_curr.EvaluatorID = @EvalID
-                       ), 0) AS EvaluatorWeightForEmployee
-                FROM dbo.Employees e
-                INNER JOIN dbo.EmployeeEvaluators ee ON ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
-                INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
-                INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
-                INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
-                WHERE e.IsActive = 1
-                  AND e.IsContinuing = 1
-                  AND e.CategoryID = @CatID
-                  AND (@BranchID IS NULL OR e.BranchID = @BranchID)
-                ORDER BY b.BranchName ASC, e.EvaluationName ASC";
-
-            var list = await conn.QueryAsync<SheetEmployeeRowModel>(sql, new
+            return filtered.Select(e => new SheetEmployeeRowModel
             {
-                CatID = targetCategoryId.Value,
-                BranchID = effectiveBranchId,
-                EvalID = evaluatorId
-            });
-            return list.ToList();
+                EmployeeID = e.EmployeeID,
+                EvaluationName = e.EvaluationName,
+                SystemName = e.SystemName,
+                BranchID = e.BranchID,
+                BranchName = e.BranchName,
+                JobTitle = e.JobTitle,
+                JobTypeName = e.JobTypeName,
+                CategoryName = e.CategoryName,
+                HasIncentive = e.HasIncentive,
+                IsContinuing = e.IsContinuing,
+                EvaluatorWeightForEmployee = ComputeEvaluatorWeightForEmployee(
+                    e.EmployeeID, e.CategoryID, groupId, isSystemGroup, weightMap, assignedCountByEmpGroup)
+            }).ToList();
         }
 
-        public async Task<List<TemplateSummaryDto>> GetCurrentTemplatesAsync(string evaluatorSearch = "", bool syncSystemTemplates = true)
+        public async Task<List<TemplateSummaryDto>> GetCurrentTemplatesAsync(
+            string evaluatorSearch = "",
+            bool syncSystemTemplates = true,
+            int? evalYear = null,
+            int? evalMonth = null)
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
@@ -246,15 +524,28 @@ namespace SchoolEvaluationERP.Services
                 await SyncAllSystemGroupTemplatesAsync(conn);
             }
 
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+
+            if (syncSystemTemplates && string.IsNullOrWhiteSpace(evaluatorSearch))
+            {
+                var activeNormalTemplates = (await conn.QueryAsync<dynamic>(@"
+                    SELECT t.TemplateID, t.EvaluatorID
+                    FROM dbo.Templates t
+                    INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                    LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                    WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0 AND ISNULL(eg.IsSystemGroup, 0) = 0")).ToList();
+
+                foreach (var nt in activeNormalTemplates)
+                {
+                    await EnsureMissingCategorySheetsForTemplateAsync(conn, (int)nt.TemplateID, (int)nt.EvaluatorID, year, month);
+                }
+            }
+
             string sql = @"
                 SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, eg.GroupName,
                        t.VersionNumber, t.CreatedAt,
                        (SELECT COUNT(1) FROM dbo.TemplateSheets ts WHERE ts.TemplateID = t.TemplateID) AS SheetsCount,
-                       (SELECT COUNT(1)
-                        FROM dbo.SheetEmployees se
-                        INNER JOIN dbo.TemplateSheets ts2 ON se.SheetID = ts2.SheetID
-                        INNER JOIN dbo.Employees e ON se.EmployeeID = e.EmployeeID
-                        WHERE ts2.TemplateID = t.TemplateID AND e.IsActive = 1 AND e.IsContinuing = 1) AS TotalEmployeesCount,
+                       0 AS TotalEmployeesCount,
                        (SELECT COUNT(1) FROM dbo.EvaluationRecords er WHERE er.TemplateID = t.TemplateID) AS LinkedEvaluationsCount
                 FROM dbo.Templates t
                 INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
@@ -269,31 +560,89 @@ namespace SchoolEvaluationERP.Services
                 Pattern = $"%{(evaluatorSearch ?? string.Empty).Trim()}%"
             })).ToList();
 
-            var sheets = await conn.QueryAsync<dynamic>(@"
-                SELECT ts.TemplateID, ts.SheetName, ts.TargetCategoryName
+            var sheets = (await conn.QueryAsync<dynamic>(@"
+                SELECT ts.TemplateID, ts.SheetID, ts.SheetName, ts.TargetCategoryID, ts.TargetBranchID, ts.TargetCategoryName
                 FROM dbo.TemplateSheets ts
                 INNER JOIN dbo.Templates t ON ts.TemplateID = t.TemplateID
                 WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0
-                ORDER BY ts.SortOrder ASC");
+                ORDER BY ts.SortOrder ASC")).ToList();
 
-            var sheetsGroup = sheets.GroupBy(x => (int)x.TemplateID)
-                                    .ToDictionary(g => g.Key, g => string.Join("  |  ", g.Select(s => $"{s.SheetName} ({s.TargetCategoryName})")));
+            var evalGroupLookup = (await conn.QueryAsync<dynamic>(@"
+                SELECT ev.EvaluatorID, ev.GroupID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                FROM dbo.Evaluators ev
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID"))
+                .ToDictionary(x => (int)x.EvaluatorID, x => (GroupID: (int)x.GroupID, IsSys: Convert.ToBoolean(x.IsSystemGroup)));
+
+            var contEmps = await LoadEffectiveContinuingEmployeesAsync(conn, year, month);
+            var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+
+            var sysExcluded = (await conn.QueryAsync<dynamic>("SELECT GroupID, EmployeeID FROM dbo.SystemTemplateExcludedEmployees"))
+                .Select(x => ((int)x.GroupID, (int)x.EmployeeID)).ToHashSet();
+            var tmplExcluded = (await conn.QueryAsync<dynamic>("SELECT EvaluatorID, EmployeeID FROM dbo.TemplateExcludedEmployees"))
+                .Select(x => ((int)x.EvaluatorID, (int)x.EmployeeID)).ToHashSet();
+
+            var assignsByEval = effAssigns
+                .GroupBy(a => a.EvaluatorID)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.EmployeeID).ToHashSet());
+
+            var catsByGroup = effWeights
+                .GroupBy(w => w.GroupID)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.CategoryID).ToHashSet());
+
+            var sheetsByTemplate = sheets.GroupBy(x => (int)x.TemplateID).ToDictionary(g => g.Key, g => g.ToList());
 
             foreach (var item in list)
             {
-                item.SheetsSummary = sheetsGroup.TryGetValue(item.TemplateID, out var sum) ? sum : "بدون أوراق";
+                sheetsByTemplate.TryGetValue(item.TemplateID, out var tSheets);
+                tSheets ??= new List<dynamic>();
+
+                item.SheetsSummary = tSheets.Count > 0
+                    ? string.Join("  |  ", tSheets.Select(s => $"{s.SheetName} ({s.TargetCategoryName})"))
+                    : "بدون أوراق";
+
+                evalGroupLookup.TryGetValue(item.EvaluatorID, out var gInfo);
+                if (gInfo.IsSys)
+                {
+                    catsByGroup.TryGetValue(gInfo.GroupID, out var sysCats);
+                    sysCats ??= new HashSet<int>();
+                    item.TotalEmployeesCount = contEmps.Count(e =>
+                        sysCats.Contains(e.CategoryID) && !sysExcluded.Contains((gInfo.GroupID, e.EmployeeID)));
+                }
+                else
+                {
+                    assignsByEval.TryGetValue(item.EvaluatorID, out var assignedSet);
+                    assignedSet ??= new HashSet<int>();
+
+                    int count = 0;
+                    foreach (var emp in contEmps)
+                    {
+                        if (!assignedSet.Contains(emp.EmployeeID)) continue;
+                        if (tmplExcluded.Contains((item.EvaluatorID, emp.EmployeeID))) continue;
+
+                        bool fitsAnySheet = tSheets.Any(sh =>
+                            (int)sh.TargetCategoryID == emp.CategoryID &&
+                            (sh.TargetBranchID == null || (int)sh.TargetBranchID == emp.BranchID));
+
+                        if (fitsAnySheet) count++;
+                    }
+                    item.TotalEmployeesCount = count;
+                }
             }
 
             return list;
         }
 
-        public async Task<TemplateFullModel?> GetTemplateFullDetailsAsync(int templateId)
+        public async Task<TemplateFullModel?> GetTemplateFullDetailsAsync(
+            int templateId, int? evalYear = null, int? evalMonth = null)
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
 
             var header = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
                 SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName,
+                       ev.GroupID,
                        ISNULL(eg.GroupName, N'') AS GroupName, t.VersionNumber, t.CreatedAt,
                        ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup,
                        ISNULL(eg.SystemGroupCode, N'') AS SystemGroupCode,
@@ -306,12 +655,19 @@ namespace SchoolEvaluationERP.Services
             if (header == null) return null;
 
             bool isSys = Convert.ToBoolean(header.IsSystemGroup);
+            int groupId = (int)header.GroupID;
+            int evaluatorId = (int)header.EvaluatorID;
+
+            if (!isSys)
+            {
+                await EnsureMissingCategorySheetsForTemplateAsync(conn, templateId, evaluatorId, year, month);
+            }
 
             var model = new TemplateFullModel
             {
                 TemplateID = header.TemplateID,
                 TemplateGroupGuid = header.TemplateGroupGuid,
-                EvaluatorID = header.EvaluatorID,
+                EvaluatorID = evaluatorId,
                 EvaluatorName = header.EvaluatorName,
                 GroupName = header.GroupName,
                 VersionNumber = header.VersionNumber,
@@ -335,6 +691,42 @@ namespace SchoolEvaluationERP.Services
                 WHERE ts.TemplateID = @ID
                 ORDER BY ts.SortOrder ASC", new { ID = templateId, IsSys = isSys ? 1 : 0 })).ToList();
 
+            var contEmps = await LoadEffectiveContinuingEmployeesAsync(conn, year, month);
+            var contEmpMap = contEmps.ToDictionary(e => e.EmployeeID);
+            var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var weightMap = effWeights.ToDictionary(w => (w.CategoryID, w.GroupID), w => w.WeightScore);
+            var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+            var assignedToEval = effAssigns.Where(a => a.EvaluatorID == evaluatorId).Select(a => a.EmployeeID).ToHashSet();
+            var assignedCountByEmpGroup = effAssigns
+                .GroupBy(a => (a.EmployeeID, a.GroupID))
+                .ToDictionary(g => g.Key, g => g.Select(x => x.EvaluatorID).Distinct().Count());
+
+            HashSet<int> excludedEmpIds;
+            HashSet<int> eligibleEmpIds;
+            if (isSys)
+            {
+                excludedEmpIds = (await conn.QueryAsync<int>(
+                    "SELECT EmployeeID FROM dbo.SystemTemplateExcludedEmployees WHERE GroupID = @GID",
+                    new { GID = groupId })).ToHashSet();
+                var sysCatIds = effWeights.Where(w => w.GroupID == groupId).Select(w => w.CategoryID).ToHashSet();
+                eligibleEmpIds = contEmps
+                    .Where(e => sysCatIds.Contains(e.CategoryID) && !excludedEmpIds.Contains(e.EmployeeID))
+                    .Select(e => e.EmployeeID).ToHashSet();
+            }
+            else
+            {
+                excludedEmpIds = (await conn.QueryAsync<int>(
+                    "SELECT EmployeeID FROM dbo.TemplateExcludedEmployees WHERE EvaluatorID = @EvalID",
+                    new { EvalID = evaluatorId })).ToHashSet();
+                eligibleEmpIds = contEmps
+                    .Where(e => assignedToEval.Contains(e.EmployeeID) && !excludedEmpIds.Contains(e.EmployeeID))
+                    .Select(e => e.EmployeeID).ToHashSet();
+            }
+
+            var placedEmpIds = new HashSet<int>();
+            var sheetRowsDict = new Dictionary<int, List<SheetEmployeeRowModel>>();
+
+            // 1. تحميل المعايير والموظفين المحفوظين في كل ورقة مع الفلترة الديناميكية حسب إسناد الشهر
             foreach (var sheet in sheets)
             {
                 var criteria = await conn.QueryAsync<CriteriaColumnModel>(@"
@@ -345,51 +737,101 @@ namespace SchoolEvaluationERP.Services
 
                 sheet.CriteriaColumns = new ObservableCollection<CriteriaColumnModel>(criteria);
 
-                var empRows = await conn.QueryAsync<SheetEmployeeRowModel>(@"
-                    SELECT se.EmployeeID, e.EvaluationName, e.SystemName,
-                           e.BranchID, b.BranchName,
-                           j.JobTitle, jt.JobTypeName,
-                           c.CategoryName,
-                           e.HasIncentive, e.IsContinuing,
-                           se.RowOrder,
-                           ISNULL((
-                               SELECT CAST(ROUND(ceg.WeightScore / NULLIF((
-                                   SELECT COUNT(1)
-                                   FROM dbo.EmployeeEvaluators ee2
-                                   INNER JOIN dbo.Evaluators ev2 ON ee2.EvaluatorID = ev2.EvaluatorID
-                                   WHERE ee2.EmployeeID = e.EmployeeID
-                                     AND ev2.GroupID = ev_curr.GroupID
-                                     AND ev2.IsActive = 1
-                               ), 0), 2) AS DECIMAL(5,2))
-                               FROM dbo.Evaluators ev_curr
-                               INNER JOIN dbo.CategoryEvaluatorGroups ceg
-                                   ON ceg.GroupID = ev_curr.GroupID AND ceg.CategoryID = e.CategoryID
-                               WHERE ev_curr.EvaluatorID = @EvalID
-                           ), 0) AS EvaluatorWeightForEmployee
-                    FROM dbo.SheetEmployees se
-                    INNER JOIN dbo.Employees e ON se.EmployeeID = e.EmployeeID
-                    INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                    INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
-                    INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
-                    INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
-                    WHERE se.SheetID = @SheetID
-                      AND e.IsActive = 1
-                      AND e.IsContinuing = 1
-                    ORDER BY se.RowOrder ASC",
-                    new { SheetID = sheet.SheetID, EvalID = model.EvaluatorID });
+                var savedEmpIds = (await conn.QueryAsync<int>(@"
+                    SELECT EmployeeID
+                    FROM dbo.SheetEmployees
+                    WHERE SheetID = @SheetID
+                    ORDER BY RowOrder ASC", new { SheetID = sheet.SheetID })).ToList();
 
-                var orderedList = empRows.ToList();
-                for (int i = 0; i < orderedList.Count; i++)
-                    orderedList[i].RowOrder = i + 1;
+                var rows = new List<SheetEmployeeRowModel>();
+                foreach (int empId in savedEmpIds)
+                {
+                    if (!eligibleEmpIds.Contains(empId) || !contEmpMap.TryGetValue(empId, out var emp))
+                        continue;
 
-                sheet.EmployeeRows = new ObservableCollection<SheetEmployeeRowModel>(orderedList);
+                    if (!isSys)
+                    {
+                        if (sheet.TargetCategoryID.HasValue && sheet.TargetCategoryID.Value != emp.CategoryID)
+                            continue;
+                        if (sheet.TargetBranchID.HasValue && sheet.TargetBranchID.Value > 0 && sheet.TargetBranchID.Value != emp.BranchID)
+                            continue;
+                    }
+
+                    if (!placedEmpIds.Add(empId))
+                        continue;
+
+                    rows.Add(new SheetEmployeeRowModel
+                    {
+                        EmployeeID = emp.EmployeeID,
+                        EvaluationName = emp.EvaluationName,
+                        SystemName = emp.SystemName,
+                        BranchID = emp.BranchID,
+                        BranchName = emp.BranchName,
+                        JobTitle = emp.JobTitle,
+                        JobTypeName = emp.JobTypeName,
+                        CategoryName = emp.CategoryName,
+                        HasIncentive = emp.HasIncentive,
+                        IsContinuing = emp.IsContinuing,
+                        EvaluatorWeightForEmployee = ComputeEvaluatorWeightForEmployee(
+                            emp.EmployeeID, emp.CategoryID, groupId, isSys, weightMap, assignedCountByEmpGroup)
+                    });
+                }
+
+                sheetRowsDict[sheet.SheetID] = rows;
+            }
+
+            // 2. إدراج الموظفين الجدد المسندين لهذا المقيم في الشهر المختار تلقائياً داخل الورقة المطابقة
+            var remainingEmps = eligibleEmpIds
+                .Where(id => !placedEmpIds.Contains(id) && contEmpMap.ContainsKey(id))
+                .Select(id => contEmpMap[id])
+                .OrderBy(e => e.CategoryID).ThenBy(e => e.BranchName).ThenBy(e => e.EvaluationName)
+                .ToList();
+
+            foreach (var emp in remainingEmps)
+            {
+                TemplateSheetModel? matchedSheet = isSys
+                    ? sheets.FirstOrDefault()
+                    : (sheets.FirstOrDefault(s => s.TargetCategoryID == emp.CategoryID && s.TargetBranchID.HasValue && s.TargetBranchID.Value == emp.BranchID)
+                       ?? sheets.FirstOrDefault(s => s.TargetCategoryID == emp.CategoryID && (!s.TargetBranchID.HasValue || s.TargetBranchID.Value <= 0)));
+
+                if (matchedSheet == null) continue;
+
+                placedEmpIds.Add(emp.EmployeeID);
+                sheetRowsDict[matchedSheet.SheetID].Add(new SheetEmployeeRowModel
+                {
+                    EmployeeID = emp.EmployeeID,
+                    EvaluationName = emp.EvaluationName,
+                    SystemName = emp.SystemName,
+                    BranchID = emp.BranchID,
+                    BranchName = emp.BranchName,
+                    JobTitle = emp.JobTitle,
+                    JobTypeName = emp.JobTypeName,
+                    CategoryName = emp.CategoryName,
+                    HasIncentive = emp.HasIncentive,
+                    IsContinuing = emp.IsContinuing,
+                    EvaluatorWeightForEmployee = ComputeEvaluatorWeightForEmployee(
+                        emp.EmployeeID, emp.CategoryID, groupId, isSys, weightMap, assignedCountByEmpGroup)
+                });
+            }
+
+            bool hasAnyNonEmptySheet = sheets.Any(s => sheetRowsDict[s.SheetID].Count > 0);
+            foreach (var sheet in sheets)
+            {
+                var rows = sheetRowsDict[sheet.SheetID];
+                if (!isSys && hasAnyNonEmptySheet && rows.Count == 0)
+                    continue;
+
+                for (int i = 0; i < rows.Count; i++)
+                    rows[i].RowOrder = i + 1;
+
+                sheet.EmployeeRows = new ObservableCollection<SheetEmployeeRowModel>(rows);
                 model.Sheets.Add(sheet);
             }
 
             return model;
         }
 
-        public async Task<(bool IsSuccess, string Message, int SavedTemplateId)> SaveTemplateAsync(TemplateFullModel model)
+        public async Task<(bool IsSuccess, string Message, int SavedTemplateId)> SaveTemplateAsync(TemplateFullModel model, int? evalYear = null, int? evalMonth = null)
         {
             bool isNew = model.TemplateID == 0;
             if (!CheckPermission(isNew ? "insert" : "update", out string permErr))
@@ -820,10 +1262,12 @@ namespace SchoolEvaluationERP.Services
             }
         }
 
-        public async Task<List<EvaluatorEmployeesSheetExportDto>> GetAllEvaluatorsWithAssignedEmployeesAsync()
+        public async Task<List<EvaluatorEmployeesSheetExportDto>> GetAllEvaluatorsWithAssignedEmployeesAsync(
+            int? evalYear = null, int? evalMonth = null)
         {
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
+            var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
 
             var evaluators = (await conn.QueryAsync<EvaluatorEmployeesSheetExportDto>(@"
                 SELECT ev.EvaluatorID,
@@ -835,54 +1279,65 @@ namespace SchoolEvaluationERP.Services
                 WHERE ev.IsActive = 1 AND eg.IsActive = 1
                 ORDER BY eg.GroupID ASC, ev.EvaluatorID ASC")).ToList();
 
-            string empSql = @"
-                SELECT e.EmployeeID,
-                       e.EvaluationName,
-                       e.SystemName,
-                       b.BranchName,
-                       c.CategoryName,
-                       j.JobTitle,
-                       jt.JobTypeName,
-                       e.HasIncentive,
-                       e.IsContinuing
-                FROM dbo.Employees e
-                INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                INNER JOIN dbo.Categories c ON e.CategoryID = c.CategoryID
-                INNER JOIN dbo.Jobs j ON e.JobID = j.JobID
-                INNER JOIN dbo.JobTypes jt ON e.JobTypeID = jt.JobTypeID
-                WHERE e.IsActive = 1
-                  AND (
-                      EXISTS (
-                          SELECT 1 FROM dbo.EmployeeEvaluators ee
-                          WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
-                      )
-                      OR EXISTS (
-                          SELECT 1 FROM dbo.CategoryEvaluatorGroups ceg
-                          INNER JOIN dbo.Evaluators ev_single ON ev_single.GroupID = ceg.GroupID
-                          WHERE ceg.CategoryID = e.CategoryID
-                            AND ev_single.EvaluatorID = @EvalID
-                            AND (SELECT COUNT(1) FROM dbo.Evaluators ev_cnt WHERE ev_cnt.GroupID = ceg.GroupID AND ev_cnt.IsActive = 1) = 1
-                      )
-                      OR EXISTS (
-                          SELECT 1 FROM dbo.SheetEmployees se
-                          INNER JOIN dbo.TemplateSheets ts ON se.SheetID = ts.SheetID
-                          INNER JOIN dbo.Templates t ON ts.TemplateID = t.TemplateID
-                          WHERE se.EmployeeID = e.EmployeeID
-                            AND t.EvaluatorID = @EvalID
-                            AND t.IsCurrentVersion = 1
-                            AND t.IsDeleted = 0
-                      )
-                  )
-                ORDER BY b.BranchName ASC, c.CategoryID ASC, e.EvaluationName ASC";
+            var sysGroupIds = (await conn.QueryAsync<int>(
+                "SELECT GroupID FROM dbo.EvaluatorGroups WHERE IsSystemGroup = 1")).ToHashSet();
+
+            var contEmps = await LoadEffectiveContinuingEmployeesAsync(conn, year, month);
+            var effWeights = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
+            var effAssigns = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
+
+            var assignsByEval = effAssigns
+                .GroupBy(a => a.EvaluatorID)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.EmployeeID).ToHashSet());
+            var catsByGroup = effWeights
+                .GroupBy(w => w.GroupID)
+                .ToDictionary(g => g.Key, g => g.Select(x => x.CategoryID).ToHashSet());
+            var sysExcluded = (await conn.QueryAsync<dynamic>("SELECT GroupID, EmployeeID FROM dbo.SystemTemplateExcludedEmployees"))
+                .Select(x => ((int)x.GroupID, (int)x.EmployeeID)).ToHashSet();
 
             foreach (var eval in evaluators)
             {
-                var emps = (await conn.QueryAsync<EvaluatorEmployeeExportRowDto>(empSql, new { EvalID = eval.EvaluatorID })).ToList();
-                for (int i = 0; i < emps.Count; i++)
+                bool isSys = sysGroupIds.Contains(eval.GroupID);
+                List<ActiveEmployeeBaseRow> matched;
+
+                if (isSys)
                 {
-                    emps[i].RowNumber = i + 1;
+                    catsByGroup.TryGetValue(eval.GroupID, out var sysCats);
+                    sysCats ??= new HashSet<int>();
+                    matched = contEmps
+                        .Where(e => sysCats.Contains(e.CategoryID) && !sysExcluded.Contains((eval.GroupID, e.EmployeeID)))
+                        .OrderBy(e => e.BranchName).ThenBy(e => e.CategoryID).ThenBy(e => e.EvaluationName)
+                        .ToList();
                 }
-                eval.Employees = emps;
+                else
+                {
+                    assignsByEval.TryGetValue(eval.EvaluatorID, out var assignedSet);
+                    assignedSet ??= new HashSet<int>();
+                    matched = contEmps
+                        .Where(e => assignedSet.Contains(e.EmployeeID))
+                        .OrderBy(e => e.BranchName).ThenBy(e => e.CategoryID).ThenBy(e => e.EvaluationName)
+                        .ToList();
+                }
+
+                var rows = new List<EvaluatorEmployeeExportRowDto>();
+                for (int i = 0; i < matched.Count; i++)
+                {
+                    var e = matched[i];
+                    rows.Add(new EvaluatorEmployeeExportRowDto
+                    {
+                        RowNumber = i + 1,
+                        EmployeeID = e.EmployeeID,
+                        EvaluationName = e.EvaluationName,
+                        SystemName = e.SystemName,
+                        BranchName = e.BranchName,
+                        CategoryName = e.CategoryName,
+                        JobTitle = e.JobTitle,
+                        JobTypeName = e.JobTypeName,
+                        HasIncentive = e.HasIncentive,
+                        IsContinuing = e.IsContinuing
+                    });
+                }
+                eval.Employees = rows;
             }
 
             return evaluators;
@@ -1123,4 +1578,11 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
+
+
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -89,9 +89,17 @@ namespace SchoolEvaluationERP.Views
                 {
                     keyArgs.Handled = true;
                     string clean = WeeklyScoreRowViewModel.NormalizeAsciiDigits(tb.Text.Trim());
+                    if (string.IsNullOrEmpty(clean))
+                    {
+                        empRow.SetScoreAt(critIndex, null);
+                        tb.Text = string.Empty;
+                        TriggerAdvance();
+                        return;
+                    }
+
                     int maxScore = empRow.GetMaxScoreAt(critIndex);
                     int parsed = 0;
-                    if (!string.IsNullOrEmpty(clean) && int.TryParse(clean, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v))
+                    if (int.TryParse(clean, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v))
                     {
                         parsed = v;
                     }
@@ -120,7 +128,12 @@ namespace SchoolEvaluationERP.Views
                 if (isAdvancing) return;
 
                 string rawText = tb.Text.Trim();
-                if (string.IsNullOrEmpty(rawText)) return;
+                if (string.IsNullOrEmpty(rawText))
+                {
+                    empRow.SetScoreAt(critIndex, null);
+                    onScoreUpdated?.Invoke();
+                    return;
+                }
 
                 string clean = WeeklyScoreRowViewModel.NormalizeAsciiDigits(rawText);
                 if (!int.TryParse(clean, NumberStyles.Integer, CultureInfo.InvariantCulture, out int val))
@@ -250,6 +263,33 @@ namespace SchoolEvaluationERP.Views
             grid.BeginEdit();
         }
 
+        public static void FocusAndEditCell(DataGrid grid, object targetItem, int targetGridColIndex, bool beginEdit = true)
+        {
+            if (targetItem == null || targetGridColIndex < 0 || targetGridColIndex >= grid.Columns.Count)
+                return;
+
+            int rowIndex = grid.Items.IndexOf(targetItem);
+            if (rowIndex < 0) return;
+
+            DataGridColumn targetColumn = grid.Columns[targetGridColIndex];
+            grid.SelectedItems.Clear();
+            grid.SelectedItem = targetItem;
+            grid.ScrollIntoView(targetItem, targetColumn);
+            grid.UpdateLayout();
+
+            var cell = GetCell(grid, rowIndex, targetGridColIndex);
+            if (cell != null)
+            {
+                cell.Focus();
+            }
+
+            grid.CurrentCell = new DataGridCellInfo(targetItem, targetColumn);
+            if (beginEdit)
+            {
+                grid.BeginEdit();
+            }
+        }
+
         private static DataGridCell? GetCell(DataGrid grid, int rowIndex, int columnIndex)
         {
             var rowContainer = grid.ItemContainerGenerator.ContainerFromIndex(rowIndex) as DataGridRow;
@@ -298,3 +338,6 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+

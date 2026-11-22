@@ -25,6 +25,19 @@
                                 Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,0,8,4"
                                 Click="BtnReloadMonthData_Click"/>
 
+                        <Button x:Name="BtnCopyIncentiveLimits" Content="📋 نسخ قيم الحوافز"
+                                Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,0,8,4"
+                                Background="#EFF6FF" BorderBrush="#93C5FD" Foreground="#1E40AF" FontWeight="Bold"
+                                ToolTip="نسخ قيم الحد الأعلى والأدنى لجميع الفئات في هذا الشهر للصقها في شهر آخر"
+                                Click="BtnCopyIncentiveLimits_Click"/>
+
+                        <Button x:Name="BtnPasteIncentiveLimits" Content="📥 لصق قيم الحوافز"
+                                Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,0,8,4"
+                                Background="#ECFDF5" BorderBrush="#6EE7B7" Foreground="#065F46" FontWeight="Bold"
+                                IsEnabled="False"
+                                ToolTip="لصق قيم الحوافز المنسوخة على الشهر المعروض حالياً"
+                                Click="BtnPasteIncentiveLimits_Click"/>
+
                         <Button x:Name="BtnSaveCategoryIncentives" Content="💾 حفظ واعتماد حدود الحوافز للفئات"
                                 Style="{StaticResource PrimaryButton}" Height="35" Padding="16,0" Margin="0,0,0,4"
                                 Click="BtnSaveCategoryIncentives_Click"/>
@@ -153,4 +166,5 @@
         </Border>
     </Grid>
 </UserControl>
+
 

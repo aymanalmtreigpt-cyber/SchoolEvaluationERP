@@ -125,13 +125,57 @@
                     <DataGrid Grid.Row="1" x:Name="GridPermissions"
                               CanUserSortColumns="False"
                               HorizontalScrollBarVisibility="Auto"
-                              VerticalScrollBarVisibility="Auto">
+                              VerticalScrollBarVisibility="Auto"
+                              PreviewMouseLeftButtonDown="GridPermissions_PreviewMouseLeftButtonDown">
+                        <DataGrid.Resources>
+                            <Style x:Key="ClickablePermCellStyle" TargetType="DataGridCell">
+                                <Setter Property="Cursor" Value="Hand"/>
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                                <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+                            </Style>
+                        </DataGrid.Resources>
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="القسم / شاشة النظام" Binding="{Binding ModuleArabicName}" ElementStyle="{StaticResource WrappingCellTextStyle}" IsReadOnly="True" Width="*" MinWidth="210"/>
-                            <DataGridCheckBoxColumn Header="قراءة وعرض" Binding="{Binding CanRead, UpdateSourceTrigger=PropertyChanged}" Width="90" MinWidth="85"/>
-                            <DataGridCheckBoxColumn Header="إضافة وكتابة" Binding="{Binding CanInsert, UpdateSourceTrigger=PropertyChanged}" Width="100" MinWidth="90"/>
-                            <DataGridCheckBoxColumn Header="تعديل" Binding="{Binding CanUpdate, UpdateSourceTrigger=PropertyChanged}" Width="75" MinWidth="70"/>
-                            <DataGridCheckBoxColumn Header="حذف" Binding="{Binding CanDelete, UpdateSourceTrigger=PropertyChanged}" Width="75" MinWidth="70"/>
+
+                            <DataGridTemplateColumn x:Name="ColPermRead" Header="قراءة وعرض" IsReadOnly="True" Width="90" MinWidth="85" CellStyle="{StaticResource ClickablePermCellStyle}">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                            <CheckBox IsChecked="{Binding CanRead, Mode=OneWay}" IsHitTestVisible="False" Focusable="False" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <DataGridTemplateColumn x:Name="ColPermInsert" Header="إضافة وكتابة" IsReadOnly="True" Width="100" MinWidth="90" CellStyle="{StaticResource ClickablePermCellStyle}">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                            <CheckBox IsChecked="{Binding CanInsert, Mode=OneWay}" IsHitTestVisible="False" Focusable="False" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <DataGridTemplateColumn x:Name="ColPermUpdate" Header="تعديل" IsReadOnly="True" Width="75" MinWidth="70" CellStyle="{StaticResource ClickablePermCellStyle}">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                            <CheckBox IsChecked="{Binding CanUpdate, Mode=OneWay}" IsHitTestVisible="False" Focusable="False" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+
+                            <DataGridTemplateColumn x:Name="ColPermDelete" Header="حذف" IsReadOnly="True" Width="75" MinWidth="70" CellStyle="{StaticResource ClickablePermCellStyle}">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Border Background="Transparent" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+                                            <CheckBox IsChecked="{Binding CanDelete, Mode=OneWay}" IsHitTestVisible="False" Focusable="False" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>
@@ -155,3 +199,4 @@
         </Border>
     </Grid>
 </UserControl>
+

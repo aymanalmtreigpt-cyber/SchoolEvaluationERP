@@ -79,9 +79,16 @@ namespace SchoolEvaluationERP.Models
         public int AssignedCategoriesCount { get; set; }
         public int AssignedEmployeesCount { get; set; }
 
+        public int ExistingTemplateID { get; set; }
+        public bool HasExistingTemplate => ExistingTemplateID > 0;
+
         public string DisplayWithGroup => string.IsNullOrWhiteSpace(GroupName)
             ? EvaluatorName
             : $"{EvaluatorName} — [{GroupName}]";
+
+        public string DisplayWithTemplateStatus => HasExistingTemplate
+            ? $"{DisplayWithGroup}  ✔ (لديه قالب فعّال — سيُفتح مباشرة)"
+            : DisplayWithGroup;
     }
 
     public class EvaluatorGroupDto
@@ -276,4 +283,5 @@ namespace SchoolEvaluationERP.Models
         public bool IsCoverageComplete { get; set; }
     }
 }
+
 

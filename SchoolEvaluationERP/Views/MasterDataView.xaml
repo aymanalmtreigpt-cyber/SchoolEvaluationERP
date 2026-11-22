@@ -5,7 +5,49 @@
              FontFamily="Segoe UI">
 
     <Grid Margin="2">
-        <TabControl Background="Transparent" BorderThickness="0" FontSize="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- شريط اختيار السنة والشهر لأساسيات توزيع الدرجات وإسناد الموظفين + النسخ واللصق -->
+        <Border Grid.Row="0" Background="#FFFFFF" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,8">
+            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="📅 أساسيات الفترة الشهرية:" FontWeight="Bold" FontSize="13.5" Foreground="#1E3A8A" VerticalAlignment="Center" Margin="0,2,10,2"/>
+
+                <TextBlock Text="السنة:" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" Margin="0,2,4,2"/>
+                <ComboBox x:Name="CmbMasterYear" Style="{StaticResource ModernComboBox}" Width="92" Height="32" Margin="0,2,10,2"
+                          SelectionChanged="MasterPeriod_SelectionChanged"/>
+
+                <TextBlock Text="الشهر:" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" Margin="0,2,4,2"/>
+                <ComboBox x:Name="CmbMasterMonth" Style="{StaticResource ModernComboBox}" Width="140" Height="32" Margin="0,2,10,2"
+                          DisplayMemberPath="DisplayText" SelectedValuePath="MonthNumber"
+                          SelectionChanged="MasterPeriod_SelectionChanged"/>
+
+                <Button x:Name="BtnCopyMonthConfig" Content="📋 نسخ ولصق أساسيات شهر"
+                        Style="{StaticResource PrimaryButton}" Height="32" Padding="12,0" FontSize="12" Margin="0,2,6,2"
+                        ToolTip="نسخ توزيع درجات الفئات وإسناد الموظفين من شهر إلى شهر آخر"
+                        Click="BtnCopyMonthConfig_Click"/>
+
+                <Button x:Name="BtnResetMonthInherit" Content="↩ إعادة للوراثة"
+                        Style="{StaticResource SecondaryButton}" Height="32" Padding="10,0" FontSize="12" Margin="0,2,6,2"
+                        ToolTip="إزالة التخصيص المستقل لهذا الشهر ليرث تلقائياً من أقرب شهر سابق"
+                        Visibility="Collapsed"
+                        Click="BtnResetMonthInherit_Click"/>
+
+                <Button x:Name="BtnRebuildMonthFromEvals" Content="🛠 استرجاع من تقييمات الشهر"
+                        Style="{StaticResource SecondaryButton}" Height="32" Padding="10,0" FontSize="12" Margin="0,2,10,2"
+                        Background="#FEF3C7" BorderBrush="#F59E0B" Foreground="#92400E" FontWeight="Bold"
+                        ToolTip="استرجاع وبناء أوزان الفئات وإسناد الموظفين لهذا الشهر بدقة من التقييمات الشهرية المحفوظة فيه (مفيد لإنقاذ الشهور السابقة 7 و 8 و 9)"
+                        Click="BtnRebuildMonthFromEvals_Click"/>
+
+                <Border x:Name="BadgeMasterPeriodStatus" Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="10,4" VerticalAlignment="Center" Margin="0,2,0,2">
+                    <TextBlock x:Name="TxtMasterPeriodStatus" Text="جاري تحميل الفترة..." FontSize="12" FontWeight="Bold" Foreground="#065F46" TextWrapping="Wrap"/>
+                </Border>
+            </WrapPanel>
+        </Border>
+
+        <TabControl Grid.Row="1" Background="Transparent" BorderThickness="0" FontSize="14">
 
             <!-- التبويب الأول: الفروع والهيكل التنظيمي -->
             <TabItem Header="  🏢 1. الفروع والهيكل التنظيمي (الفئات / الوظائف / نوع الوظيفة)  " Padding="14,8" FontWeight="Bold">
@@ -312,7 +354,7 @@
                                         Style="{StaticResource SecondaryButton}" Height="35" Margin="0,0,6,4"
                                         Click="BtnImportExcel_Click"/>
 
-                                <Button x:Name="BtnDownloadExcelTemplate" Content="📄 تحميل قالب Excel فارغ"
+                                <Button x:Name="BtnDownloadExcelTemplate" Content="📄 تصدير / تحميل قالب الموظفين Excel"
                                         Style="{StaticResource SecondaryButton}" Height="35" Margin="0,0,0,4"
                                         Click="BtnDownloadExcelTemplate_Click"/>
                             </WrapPanel>
@@ -373,3 +415,5 @@
         </TabControl>
     </Grid>
 </UserControl>
+
+

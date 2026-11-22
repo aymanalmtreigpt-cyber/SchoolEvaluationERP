@@ -83,30 +83,48 @@ namespace SchoolEvaluationERP.Services
                 WHERE c.IsActive = 1
                 ORDER BY c.CategoryID ASC", new { Year = year, Month = month })).ToList();
 
-            var employees = (await conn.QueryAsync<EmployeeRawMonthlyScoreItem>(@"
-                SELECT e.EmployeeID, e.CategoryID, e.SystemName, b.BranchName, e.HasIncentive
+            var rawEmployees = (await conn.QueryAsync<dynamic>(@"
+                SELECT e.EmployeeID, e.CategoryID, e.SystemName, b.BranchName, e.HasIncentive, e.IsContinuing
                 FROM dbo.Employees e
                 INNER JOIN dbo.Branches b ON e.BranchID = b.BranchID
-                WHERE e.IsActive = 1 AND e.IsContinuing = 1")).ToList();
+                WHERE e.IsActive = 1")).ToList();
 
-            var catGroups = (await conn.QueryAsync<dynamic>(@"
-                SELECT ceg.CategoryID, ceg.GroupID, ceg.WeightScore
-                FROM dbo.CategoryEvaluatorGroups ceg
-                INNER JOIN dbo.EvaluatorGroups eg ON ceg.GroupID = eg.GroupID
-                WHERE eg.IsActive = 1")).ToList();
+            var snaps = await MonthlyPeriodConfigService.GetEffectiveEmployeeSnapshotsAsync(conn, year, month);
+            var employees = new List<EmployeeRawMonthlyScoreItem>();
+            foreach (var re in rawEmployees)
+            {
+                int empId = (int)re.EmployeeID;
+                int catId = (int)re.CategoryID;
+                bool hasInc = Convert.ToBoolean(re.HasIncentive);
+                bool isCont = Convert.ToBoolean(re.IsContinuing);
 
+                if (snaps.TryGetValue(empId, out var snap))
+                {
+                    catId = snap.CategoryID;
+                    hasInc = snap.HasIncentive;
+                    isCont = snap.IsContinuing;
+                }
+
+                if (!isCont) continue;
+
+                employees.Add(new EmployeeRawMonthlyScoreItem
+                {
+                    EmployeeID = empId,
+                    CategoryID = catId,
+                    SystemName = (string)re.SystemName,
+                    BranchName = (string)re.BranchName,
+                    HasIncentive = hasInc
+                });
+            }
+
+            var catGroups = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, year, month);
             var catGroupsMap = catGroups
-                .GroupBy(x => (int)x.CategoryID)
+                .GroupBy(x => x.CategoryID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            var empAssignedEvals = (await conn.QueryAsync<dynamic>(@"
-                SELECT ee.EmployeeID, ee.EvaluatorID, ev.GroupID
-                FROM dbo.EmployeeEvaluators ee
-                INNER JOIN dbo.Evaluators ev ON ee.EvaluatorID = ev.EvaluatorID
-                WHERE ev.IsActive = 1")).ToList();
-
+            var empAssignedEvals = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
             var empAssignedMap = empAssignedEvals
-                .GroupBy(x => (int)x.EmployeeID)
+                .GroupBy(x => x.EmployeeID)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
             string scoresSql = @"
@@ -147,10 +165,10 @@ namespace SchoolEvaluationERP.Services
                         ));
 
                 catGroupsMap.TryGetValue(emp.CategoryID, out var reqGroups);
-                reqGroups ??= new List<dynamic>();
+                reqGroups ??= new List<EffectiveCategoryWeightDto>();
 
                 empAssignedMap.TryGetValue(emp.EmployeeID, out var assignedForEmp);
-                assignedForEmp ??= new List<dynamic>();
+                assignedForEmp ??= new List<EffectiveEmployeeAssignmentDto>();
 
                 decimal monthlyTotalScore = 0m;
 
@@ -158,10 +176,10 @@ namespace SchoolEvaluationERP.Services
                 {
                     foreach (var grp in reqGroups)
                     {
-                        int gId = (int)grp.GroupID;
-                        decimal groupWeight = (decimal)grp.WeightScore;
+                        int gId = grp.GroupID;
+                        decimal groupWeight = grp.WeightScore;
 
-                        var assignedInGroup = assignedForEmp.Where(a => (int)a.GroupID == gId).ToList();
+                        var assignedInGroup = assignedForEmp.Where(a => a.GroupID == gId).ToList();
                         if (assignedInGroup.Count == 0) continue;
 
                         int assignedCount = assignedInGroup.Count;
@@ -169,7 +187,7 @@ namespace SchoolEvaluationERP.Services
 
                         foreach (var member in assignedInGroup)
                         {
-                            int evId = (int)member.EvaluatorID;
+                            int evId = member.EvaluatorID;
                             if (rawByEvalId.TryGetValue(evId, out var evalScore))
                             {
                                 rawSumInGroup += evalScore.RawOut100;
@@ -201,7 +219,10 @@ namespace SchoolEvaluationERP.Services
                 var catRow = categories[i];
                 catRow.RowNumber = i + 1;
                 empsByCategory.TryGetValue(catRow.CategoryID, out var catEmps);
-                catRow.AttachMonthlyEmployeeScores(catEmps ?? new List<EmployeeRawMonthlyScoreItem>(), year, month, roundToNearest50);
+                var listForCat = catEmps ?? new List<EmployeeRawMonthlyScoreItem>();
+                catRow.TotalContinuingEmployeesCount = listForCat.Count;
+                catRow.IncentiveEligibleEmployeesCount = listForCat.Count(e => e.HasIncentive);
+                catRow.AttachMonthlyEmployeeScores(listForCat, year, month, roundToNearest50);
             }
 
             return categories;
@@ -236,6 +257,13 @@ namespace SchoolEvaluationERP.Services
             }
 
             using var conn = await OpenReadyConnectionAsync();
+            var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
+            if (isLocked)
+            {
+                string lockName = IncentiveCalculatorService.GetArabicMonthName(month);
+                return (false, $"لا يمكن تعديل حدود الحوافز لشهر ({lockName} {year} م) لأنه معتمد ومغلق نهائياً بواسطة ({lockedBy}).");
+            }
+
             using var tx = conn.BeginTransaction();
             try
             {
@@ -296,6 +324,13 @@ namespace SchoolEvaluationERP.Services
                 return (false, "يرجى اختيار سجل تقييم شهري صالح أولاً.");
 
             using var conn = await OpenReadyConnectionAsync();
+            var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, workspace.EvalYear, workspace.EvalMonth);
+            if (isLocked)
+            {
+                string lockName = IncentiveCalculatorService.GetArabicMonthName(workspace.EvalMonth);
+                return (false, $"لا يمكن تعديل نسب الموازنة لشهر ({lockName} {workspace.EvalYear} م) لأنه معتمد ومغلق نهائياً بواسطة ({lockedBy}).");
+            }
+
             using var tx = conn.BeginTransaction();
             try
             {
@@ -346,3 +381,8 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
