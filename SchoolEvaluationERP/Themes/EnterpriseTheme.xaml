@@ -319,6 +319,7 @@
         <Setter Property="Foreground" Value="#1E293B"/>
         <Setter Property="FontWeight" Value="Bold"/>
         <Setter Property="MinHeight" Value="42"/>
+        <Setter Property="MaxHeight" Value="92"/>
         <Setter Property="Padding" Value="8,6"/>
         <Setter Property="BorderBrush" Value="#E2E8F0"/>
         <Setter Property="BorderThickness" Value="0,0,1,1"/>
@@ -334,3 +335,4 @@
     </Style>
 
 </ResourceDictionary>
+

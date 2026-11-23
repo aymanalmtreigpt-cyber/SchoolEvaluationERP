@@ -14,13 +14,13 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*" MinHeight="180"/>
+                            <RowDefinition Height="*" MinHeight="95"/>
                         </Grid.RowDefinitions>
 
                         <StackPanel Grid.Row="0" Margin="0,0,0,10">
-                            <TextBlock Text="إدارة قوالب التقييم الشهرية متعددة الأوراق (A4 PDF &amp; Excel)"
+                            <TextBlock Text="إدارة قوالب التقييم الشهرية متعددة الأوراق (Excel)"
                                        FontSize="16.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
-                            <TextBlock Text="يتم إنشاء قالب مستقل لكل مقيم (حتى لو كان داخل مجموعة مقيمين). يمكنك تصدير القالب بصيغة Excel أو طباعته بحجم A4."
+                            <TextBlock Text="يتم إنشاء قالب مستقل لكل مقيم (حتى لو كان داخل مجموعة مقيمين). يمكنك تصدير القالب بصيغة Excel."
                                        FontSize="12.5" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,3,0,8"/>
 
                             <WrapPanel Orientation="Horizontal">
@@ -41,9 +41,6 @@
                                         Style="{StaticResource SecondaryButton}" Height="36" Margin="0,0,8,6"
                                         Click="BtnExportSelectedTemplateExcel_Click"/>
 
-                                <Button x:Name="BtnPrintSelectedTemplatePdf" Content="🖨 طباعة استمارة A4 (PDF)"
-                                        Style="{StaticResource SecondaryButton}" Height="36" Margin="0,0,8,6"
-                                        Click="BtnPrintSelectedTemplatePdf_Click"/>
 
                                 <Button x:Name="BtnDeleteSelectedTemplate" Content="🗑 حذف المحدد"
                                         Style="{StaticResource DangerButton}" Height="36" Padding="14,0" Margin="0,0,0,6"
@@ -84,21 +81,10 @@
                                 <DataGridTextColumn Header="المقيم المسؤول والمجموعة" Binding="{Binding EvaluatorWithGroupDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="210" MinWidth="180"/>
                                 <DataGridTextColumn Header="النسخة" Binding="{Binding VersionDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="80" MinWidth="75"/>
                                 <DataGridTextColumn Header="الأوراق" Binding="{Binding SheetsCount}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="75" MinWidth="70"/>
-                                <DataGridTextColumn Header="الموظفون المستمرون" Binding="{Binding TotalEmployeesCount}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="120" MinWidth="110"/>
+                                <DataGridTextColumn Header="الموظفون المستمرون" Binding="{Binding TotalEmployeesCount}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="135" MinWidth="125"/>
                                 <DataGridTextColumn Header="تفاصيل الأوراق والفئات والفروع" Binding="{Binding SheetsSummary}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*" MinWidth="300"/>
                                 <DataGridTextColumn Header="حالة الارتباط والأمان" Binding="{Binding StatusDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="210" MinWidth="185"/>
                                 <DataGridTextColumn Header="تاريخ الإنشاء" Binding="{Binding CreatedAtDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="105" MinWidth="95"/>
-                                <DataGridTemplateColumn Header="معاينة القراءة" Width="115" MinWidth="110">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Button Content="👁 عرض القالب"
-                                                    Style="{StaticResource SecondaryButton}"
-                                                    Height="30" Padding="8,0" FontSize="12"
-                                                    ToolTip="فتح القالب في صفحة التصميم بوضع القراءة فقط"
-                                                    Click="BtnRowViewReadOnly_Click"/>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>
@@ -113,11 +99,11 @@
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*" MinHeight="180"/>
+                            <RowDefinition Height="*" MinHeight="95"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <Border Grid.Row="0" Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
+                        <Border Grid.Row="0" Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="10,7" Margin="0,0,0,6">
                             <StackPanel>
                                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
                                     <TextBlock x:Name="TxtDesignerHeaderTitle"
@@ -130,7 +116,7 @@
                                     </Border>
 
                                     <Border x:Name="BadgeReadOnlyMode" Background="#FEF3C7" BorderBrush="#FCD34D" BorderThickness="1" CornerRadius="6" Padding="10,3" Margin="0,0,0,4" Visibility="Collapsed">
-                                        <TextBlock x:Name="TxtReadOnlyBadge" Text="🔒 وضع القراءة فقط (للتعديل حدد القالب من القائمة واضغط فتح وتعديل القالب)" Foreground="#92400E" FontWeight="Bold" FontSize="12" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="TxtReadOnlyBadge" Text="🔒 وضع القراءة فقط (اضغط على «✏ الانتقال إلى وضع التعديل» لتعديل القالب)" Foreground="#92400E" FontWeight="Bold" FontSize="12" TextWrapping="Wrap"/>
                                     </Border>
                                 </WrapPanel>
 
@@ -149,9 +135,12 @@
                                             Style="{StaticResource SecondaryButton}" Height="35" Margin="0,0,8,4" IsEnabled="False"
                                             Click="BtnDesignerExportExcel_Click"/>
 
-                                    <Button x:Name="BtnDesignerPrintPdf" Content="🖨 تصدير وطباعة A4 (PDF)"
-                                            Style="{StaticResource SecondaryButton}" Height="35" Margin="0,0,8,4" IsEnabled="False"
-                                            Click="BtnDesignerPrintPdf_Click"/>
+                                    <Button x:Name="BtnSwitchToEditMode" Content="✏ الانتقال إلى وضع التعديل"
+                                            Style="{StaticResource PrimaryButton}" Height="35" Padding="14,0" Margin="0,0,8,4"
+                                            Visibility="Collapsed"
+                                            ToolTip="تفعيل وضع التعديل على هذا القالب مباشرة دون الحاجة للرجوع إلى قائمة القوالب"
+                                            Click="BtnSwitchToEditMode_Click"/>
+
 
                                     <Button x:Name="BtnDesignerSaveTemplate" Content="💾 حفظ واعتماد القالب بالكامل"
                                             Style="{StaticResource PrimaryButton}" Height="35" Margin="0,0,0,4" IsEnabled="False"
@@ -160,7 +149,7 @@
                             </StackPanel>
                         </Border>
 
-                        <Border Grid.Row="1" x:Name="PanelCriteriaDesigner" Background="#FFFFFF" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10" IsEnabled="False">
+                        <Border Grid.Row="1" x:Name="PanelCriteriaDesigner" Background="#FFFFFF" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,6" IsEnabled="False">
                             <StackPanel>
                                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,0,6">
                                     <TextBlock Text="📐 أعمدة مبادئ التقييم للورقة الحالية (درجات صحيحة بدون كسور):" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" VerticalAlignment="Center" Margin="0,0,12,4"/>
@@ -169,10 +158,23 @@
                                         <TextBlock x:Name="TxtSheetCriteriaSum" Text="مجموع درجات الأعمدة: 0 من 100 درجة" FontWeight="Bold" FontSize="12" Foreground="#B45309"/>
                                     </Border>
 
-                                    <Button Content="⚖ توزيع الـ 100 درجة بالتساوي"
+                                    <Button x:Name="BtnDistributeCriteriaEqually" Content="⚖ توزيع الـ 100 درجة بالتساوي"
                                             Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,4"
                                             ToolTip="توزيع 100 درجة صحيحة بالتساوي على جميع أعمدة الورقة الحالية"
                                             Click="BtnDistributeCriteriaEqually_Click"/>
+
+                                    <Button x:Name="BtnCopyCriteriaColumns" Content="📋 نسخ أعمدة"
+                                            Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12" VerticalAlignment="Center" Margin="0,0,6,4"
+                                            Background="#EEF2FF" BorderBrush="#818CF8" Foreground="#3730A3" FontWeight="Bold"
+                                            ToolTip="تحديد أعمدة معينة من هذه الورقة لنسخها ولصقها في ورقة أخرى أو قالب مقيم آخر"
+                                            Click="BtnCopyCriteriaColumns_Click"/>
+
+                                    <Button x:Name="BtnPasteCriteriaColumns" Content="📥 لصق الأعمدة"
+                                            Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,4"
+                                            Background="#ECFDF5" BorderBrush="#6EE7B7" Foreground="#065F46" FontWeight="Bold"
+                                            IsEnabled="False"
+                                            ToolTip="لصق أعمدة التقييم المنسوخة في الورقة الحالية (إضافة أو استبدال)"
+                                            Click="BtnPasteCriteriaColumns_Click"/>
 
                                     <Button x:Name="BtnCopyCriteriaToAllSheets" Content="📋 تعميم أعمدة هذه الورقة على كل الأوراق"
                                             Style="{StaticResource SecondaryButton}" Height="30" Padding="10,0" FontSize="12" VerticalAlignment="Center" Margin="0,0,0,4"
@@ -181,46 +183,114 @@
                                             Click="BtnCopyCriteriaToAllSheets_Click"/>
                                 </WrapPanel>
 
-                                <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                <!-- شريط وضع تحديد الأعمدة للنسخ -->
+                                <Border x:Name="BannerCriteriaCopyMode" Background="#ECFDF5" BorderBrush="#10B981" BorderThickness="1.5" CornerRadius="6" Padding="10,6" Margin="0,0,0,6" Visibility="Collapsed">
+                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtCriteriaCopyModeHint"
+                                                   Text="☑ وضع تحديد الأعمدة للنسخ: انقر على الأعمدة أدناه لتحديدها (وانقر مرة ثانية لإلغاء التحديد)، ثم اضغط نسخ:"
+                                                   FontSize="12" FontWeight="Bold" Foreground="#065F46" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,2,10,2"/>
+
+                                        <Button x:Name="BtnConfirmCopyCriteria" Content="✔ نسخ المحدد (0)"
+                                                Style="{StaticResource PrimaryButton}" Height="28" Padding="12,0" FontSize="12" Margin="0,2,6,2"
+                                                IsEnabled="False"
+                                                Click="BtnConfirmCopyCriteria_Click"/>
+
+                                        <Button x:Name="BtnSelectAllCriteriaForCopy" Content="تحديد الكل"
+                                                Style="{StaticResource SecondaryButton}" Height="28" Padding="10,0" FontSize="11.5" Margin="0,2,6,2"
+                                                Click="BtnSelectAllCriteriaForCopy_Click"/>
+
+                                        <Button x:Name="BtnClearCriteriaSelectionForCopy" Content="إلغاء التحديد"
+                                                Style="{StaticResource SecondaryButton}" Height="28" Padding="10,0" FontSize="11.5" Margin="0,2,6,2"
+                                                Click="BtnClearCriteriaSelectionForCopy_Click"/>
+
+                                        <Button x:Name="BtnCancelCopyCriteria" Content="✖ إلغاء"
+                                                Style="{StaticResource SecondaryButton}" Height="28" Padding="10,0" FontSize="11.5" Margin="0,2,0,2"
+                                                Click="BtnCancelCopyCriteria_Click"/>
+                                    </WrapPanel>
+                                </Border>
+
+                                <!-- شريط وضع تحريك وإعادة ترتيب العمود -->
+                                <Border x:Name="BannerCriteriaMoveMode" Background="#FFFBEB" BorderBrush="#F59E0B" BorderThickness="1.5" CornerRadius="6" Padding="10,5" Margin="0,0,0,5" Visibility="Collapsed">
+                                    <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock x:Name="TxtCriteriaMoveModeHint"
+                                                   Text="✋ وضع تحريك العمود: حرّك الماوس واضغط على أي عمود آخر أو على (⬇) لنقله إلى ذلك المكان (أو اضغط Esc للإلغاء)."
+                                                   FontSize="12" FontWeight="Bold" Foreground="#92400E" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,2,10,2"/>
+
+                                        <Button x:Name="BtnCancelMoveCriteria" Content="✖ إلغاء النقل"
+                                                Style="{StaticResource SecondaryButton}" Height="26" Padding="10,0" FontSize="11.5" Margin="0,1,0,1"
+                                                Click="BtnCancelMoveCriteria_Click"/>
+                                    </WrapPanel>
+                                </Border>
+
+                                <ScrollViewer x:Name="ScrollCriteriaColumns"
+                                              HorizontalScrollBarVisibility="Auto"
+                                              VerticalScrollBarVisibility="Disabled"
+                                              MaxHeight="132"
+                                              Padding="0,0,0,6"
+                                              AllowDrop="True"
+                                              DragOver="ScrollCriteriaColumns_DragOver"
+                                              PreviewMouseWheel="ScrollCriteriaColumns_PreviewMouseWheel">
                                     <StackPanel x:Name="StackInteractiveColumns" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2"/>
                                 </ScrollViewer>
                             </StackPanel>
                         </Border>
 
-                        <Border Grid.Row="2" x:Name="PanelEmployeeAdder" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,8" IsEnabled="False">
+                        <Border Grid.Row="2" x:Name="PanelEmployeeAdder" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="10,6" Margin="0,0,0,6" IsEnabled="False">
                             <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="👤 إضافة موظف مسند:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,8,4"/>
+                                <TextBlock Text="👤 إضافة موظف مسند:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,6,4"/>
 
                                 <ComboBox x:Name="CmbSearchCategoryEmployees"
-                                          Style="{StaticResource ModernComboBox}" Width="230" Height="35" Margin="0,2,8,4"
+                                          Style="{StaticResource ModernComboBox}" Width="205" Height="34" Margin="0,2,6,4"
                                           IsEditable="True" StaysOpenOnEdit="True"
                                           DisplayMemberPath="EvaluationName" SelectedValuePath="EmployeeID"
                                           ToolTip="يعرض فقط الموظفين المستمرين المسندين لهذا المقيم في الفئة والفرع المحددين للورقة"/>
 
-                                <Button Content="+ إدراج الموظف"
-                                        Style="{StaticResource PrimaryButton}" Height="35" Padding="12,0" FontSize="12.5" Margin="0,2,8,4"
+                                <Button x:Name="BtnAddSelectedEmployee" Content="+ إدراج الموظف"
+                                        Style="{StaticResource PrimaryButton}" Height="34" Padding="10,0" FontSize="12" Margin="0,2,6,4"
                                         Click="BtnAddSelectedEmployeeToSheet_Click"/>
 
                                 <Button x:Name="BtnAddAllCategoryEmployees" Content="⚡ إدراج جميع الموظفين المتبقين"
-                                        Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" FontSize="12.5" Margin="0,2,8,4"
+                                        Style="{StaticResource SecondaryButton}" Height="34" Padding="10,0" FontSize="12" Margin="0,2,6,4"
                                         Click="BtnAddAllCategoryEmployees_Click"/>
 
-                                <Button Content="🗑 إزالة المحدد من الورقة"
-                                        Style="{StaticResource DangerButton}" Height="35" Padding="12,0" FontSize="12.5" Margin="0,2,0,4"
-                                        ToolTip="يمكنك تحديد موظف أو عدة موظفين بالماوس أو Ctrl أو Shift وإزالتهم دفعة واحدة"
+                                <Button x:Name="BtnRemoveEmployeeFromSheet" Content="🗑 إزالة المحدد من الورقة"
+                                        Style="{StaticResource DangerButton}" Height="34" Padding="10,0" FontSize="12" Margin="0,2,10,4"
+                                        ToolTip="يمكنك تحديد موظف أو عدة موظفين بالماوس أو Ctrl أو Shift وإزالتهم (أو الضغط على زر Delete في لوحة المفاتيح)"
                                         Click="BtnRemoveEmployeeFromSheet_Click"/>
+
+                                <Border Width="1" Height="24" Background="#CBD5E1" VerticalAlignment="Center" Margin="0,2,10,4"/>
+
+                                <TextBlock Text="🔍 بحث في كل الأوراق:" FontWeight="SemiBold" Foreground="#1E3A8A" VerticalAlignment="Center" Margin="0,2,6,4"/>
+
+                                <TextBox x:Name="TxtSearchTemplateEmployees"
+                                         Style="{StaticResource ModernTextBox}" Width="185" Height="34" Margin="0,2,4,4"
+                                         ToolTip="ابحث باسم الموظف أو الفرع أو الوظيفة أو اسم الورقة عبر جميع أوراق القالب دفعة واحدة..."
+                                         TextChanged="TxtSearchTemplateEmployees_TextChanged"/>
+
+                                <Button x:Name="BtnClearTemplateEmployeeSearch" Content="✖"
+                                        Style="{StaticResource SecondaryButton}" Width="30" Height="34" Padding="0" FontSize="12" Margin="0,2,6,4"
+                                        Visibility="Collapsed"
+                                        ToolTip="مسح البحث والعودة للورقة الحالية"
+                                        Click="BtnClearTemplateEmployeeSearch_Click"/>
+
+                                <TextBlock x:Name="TxtTemplateSearchMatchCount" Text=""
+                                           FontSize="12" FontWeight="Bold" Foreground="#1E40AF"
+                                           VerticalAlignment="Center" Margin="2,2,0,4" Visibility="Collapsed"/>
                             </WrapPanel>
                         </Border>
 
                         <DataGrid Grid.Row="3" x:Name="GridSheetPreview"
                                   IsReadOnly="True"
                                   CanUserSortColumns="False"
+                                  CanUserReorderColumns="False"
                                   SelectionMode="Extended"
                                   SelectionUnit="FullRow"
                                   HorizontalScrollBarVisibility="Auto"
-                                  VerticalScrollBarVisibility="Auto"/>
+                                  VerticalScrollBarVisibility="Auto"
+                                  PreviewKeyDown="GridSheetPreview_PreviewKeyDown"
+                                  MouseDoubleClick="GridSheetPreview_MouseDoubleClick"/>
 
-                        <Border Grid.Row="4" x:Name="PanelBottomSheetsBar" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1.5" CornerRadius="8" Padding="12,8" Margin="0,10,0,0">
+                        <Border Grid.Row="4" x:Name="PanelBottomSheetsBar" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1.5" CornerRadius="8" Padding="10,6" Margin="0,6,0,0">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
@@ -232,7 +302,7 @@
 
                                 <TextBlock Grid.Column="0" Text="📑 أوراق القالب:" Foreground="#1E3A8A" FontWeight="Bold" VerticalAlignment="Center" Margin="4,0"/>
 
-                                <ScrollViewer Grid.Column="2" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                <ScrollViewer x:Name="ScrollSheetTabs" Grid.Column="2" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="0,0,0,2" PreviewMouseWheel="ScrollCriteriaColumns_PreviewMouseWheel">
                                     <StackPanel x:Name="StackSheetTabs" Orientation="Horizontal" VerticalAlignment="Center"/>
                                 </ScrollViewer>
 
@@ -255,6 +325,25 @@
         </TabControl>
     </Grid>
 </UserControl>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

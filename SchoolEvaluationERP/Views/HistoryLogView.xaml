@@ -14,7 +14,7 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*" MinHeight="180"/>
+                            <RowDefinition Height="*" MinHeight="95"/>
                         </Grid.RowDefinitions>
 
                         <!-- 0: العنوان وتنبيه السجل الرقابي المحمي -->
@@ -86,20 +86,10 @@
                                 <DataGridTextColumn Header="شهر التقييم" Binding="{Binding PeriodDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="145" MinWidth="135"/>
                                 <DataGridTextColumn Header="نسخة القالب" Binding="{Binding VersionDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="85" MinWidth="80"/>
                                 <DataGridTextColumn Header="عدد الموظفين" Binding="{Binding EvaluatedEmployeesCount}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="95" MinWidth="90"/>
+                                <DataGridTextColumn Header="مجموع درجات القالب" Binding="{Binding TotalScoreSumDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="145" MinWidth="130"/>
                                 <DataGridTextColumn Header="متوسط التقييم" Binding="{Binding AverageScoreDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="105" MinWidth="95"/>
                                 <DataGridTextColumn Header="أُدخل بواسطة" Binding="{Binding CreatedByFullName}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="*" MinWidth="180"/>
                                 <DataGridTextColumn Header="تاريخ الإدخال" Binding="{Binding CreatedAtDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="150" MinWidth="140"/>
-                                <DataGridTemplateColumn Header="معاينة القراءة" Width="120" MinWidth="115">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <Button Content="👁 عرض الدرجات"
-                                                    Style="{StaticResource SecondaryButton}"
-                                                    Height="30" Padding="8,0" FontSize="12"
-                                                    ToolTip="استعراض درجات هذا التقييم الشهري في وضع القراءة والمراقبة"
-                                                    Click="BtnRowViewReadOnly_Click"/>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>
@@ -113,7 +103,7 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*" MinHeight="180"/>
+                            <RowDefinition Height="*" MinHeight="95"/>
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
@@ -134,6 +124,21 @@
                                 <TextBlock x:Name="TxtDetailsSubInfo"
                                            Text="يعرض هذا القسم اللقطة التاريخية الكاملة لدرجات الموظفين ومبادئ التقييم وحصة المقيم المعتمدة وقت التقييم."
                                            FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+
+                                <!-- ملخص إجمالي درجات ومتوسط القالب بالكامل -->
+                                <WrapPanel x:Name="PanelTemplateSummaryBadges" Orientation="Horizontal" Margin="0,7,0,0" Visibility="Collapsed">
+                                    <Border Background="#F1F5F9" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="6" Padding="10,4" Margin="0,0,8,2">
+                                        <TextBlock x:Name="TxtTemplateTotalEmployeesBadge" Text="👥 موظفو القالب: 0" FontSize="12" FontWeight="Bold" Foreground="#334155"/>
+                                    </Border>
+
+                                    <Border Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="6" Padding="10,4" Margin="0,0,8,2">
+                                        <TextBlock x:Name="TxtTemplateTotalScoresBadge" Text="🏆 مجموع الدرجات بالقالب: 0" FontSize="12" FontWeight="Bold" Foreground="#065F46"/>
+                                    </Border>
+
+                                    <Border Background="#EFF6FF" BorderBrush="#93C5FD" BorderThickness="1" CornerRadius="6" Padding="10,4" Margin="0,0,0,2">
+                                        <TextBlock x:Name="TxtTemplateOverallAverageBadge" Text="📊 متوسط التقييم للقالب: 0%" FontSize="12" FontWeight="Bold" Foreground="#1E40AF"/>
+                                    </Border>
+                                </WrapPanel>
                             </StackPanel>
                         </Border>
 
@@ -188,4 +193,8 @@
         </TabControl>
     </Grid>
 </UserControl>
+
+
+
+
 

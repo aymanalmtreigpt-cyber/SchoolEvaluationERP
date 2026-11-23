@@ -425,7 +425,7 @@ namespace SchoolEvaluationERP.Services
             public int SheetID { get; set; }
             public int EmployeeID { get; set; }
             public int CriteriaID { get; set; }
-            public decimal GivenScore { get; set; }
+            public decimal? GivenScore { get; set; }
             public int? RawEnteredCount { get; set; }
             public decimal SnapshotEvaluatorWeight { get; set; }
             public string EvaluationName { get; set; } = string.Empty;
@@ -603,7 +603,10 @@ namespace SchoolEvaluationERP.Services
 
                     foreach (var s in empGrp)
                     {
-                        scoreDict[s.CriteriaID] = s.GivenScore;
+                        if (s.GivenScore.HasValue)
+                        {
+                            scoreDict[s.CriteriaID] = s.GivenScore.Value;
+                        }
                         if (s.RawEnteredCount.HasValue)
                         {
                             rawCountsDict[s.CriteriaID] = s.RawEnteredCount.Value;
@@ -802,7 +805,9 @@ namespace SchoolEvaluationERP.Services
                     {
                         for (int i = 0; i < emp.CriteriaCount; i++)
                         {
-                            int given = emp.GetScoreAt(i);
+                            int? givenNullable = emp.GetNullableScoreAt(i);
+                            if (!givenNullable.HasValue) continue;
+                            int given = givenNullable.Value;
                             int max = emp.GetMaxScoreAt(i);
                             if (given < 0 || given > max)
                             {
@@ -918,7 +923,7 @@ namespace SchoolEvaluationERP.Services
                         for (int c = 0; c < emp.CriteriaCount; c++)
                         {
                             var critCol = sheet.CriteriaColumns[c];
-                            decimal effectiveScore = emp.GetEffectiveCriteriaScoreForSave(c);
+                            decimal? effectiveScore = emp.GetEffectiveCriteriaScoreForSave(c);
                             int? rawCount = workspace.IsCountBasedEvaluation ? emp.GetNullableScoreAt(c) : (int?)null;
 
                             await conn.ExecuteAsync(insertScoreSql, new
@@ -965,9 +970,19 @@ namespace SchoolEvaluationERP.Services
                 await tx.CommitAsync();
 
                 string arMonth = IncentiveCalculatorService.GetArabicMonthName(workspace.EvalMonth);
-                string successMsg = isNew
-                    ? $"تم حفظ واعتماد التقييم الشهري لشهر ({arMonth} {workspace.EvalYear} م) للمقيم ({workspace.EvaluatorName}) بنجاح."
-                    : $"تم حفظ التعديلات على التقييم الشهري لشهر ({arMonth} {workspace.EvalYear} م) وانعكست في سجل التقييمات بنجاح.";
+                int remainingMissingCount = workspace.Sheets.Sum(s => s.EmployeeRows.Count(r => r.HasAnyEmptyCriteria));
+                string successMsg;
+                if (remainingMissingCount > 0)
+                {
+                    successMsg = $"تم الحفظ الجزئي لتقييم شهر ({arMonth} {workspace.EvalYear} م) للمقيم ({workspace.EvaluatorName}) بنجاح.\n" +
+                                 $"• تم الإبقاء على ({remainingMissingCount}) موظف فارغاً (بدون 0) لإكمال درجاتهم في أي وقت، ولن يدخلوا في التقرير النهائي حتى تكتمل درجاتهم.";
+                }
+                else
+                {
+                    successMsg = isNew
+                        ? $"تم حفظ واعتماد التقييم الشهري لشهر ({arMonth} {workspace.EvalYear} م) للمقيم ({workspace.EvaluatorName}) بنجاح."
+                        : $"تم حفظ التعديلات على التقييم الشهري لشهر ({arMonth} {workspace.EvalYear} م) وانعكست في سجل التقييمات بنجاح.";
+                }
 
                 return (true, successMsg, targetRecordId);
             }
@@ -996,7 +1011,32 @@ namespace SchoolEvaluationERP.Services
                        er.CreatedAt,
                        er.LastModifiedAt,
                        ISNULL(NULLIF(er.SnapshotCreatedByFullName, N''), ISNULL(u.FullName, N'مدير النظام العام')) AS CreatedByFullName,
-                       (SELECT COUNT(DISTINCT es.EmployeeID) FROM dbo.EvaluationScores es WHERE es.RecordID = er.RecordID) AS EvaluatedEmployeesCount,
+                       (
+                           SELECT COUNT(1)
+                           FROM (
+                               SELECT es.SheetID, es.EmployeeID
+                               FROM dbo.EvaluationScores es
+                               WHERE es.RecordID = er.RecordID
+                               GROUP BY es.SheetID, es.EmployeeID
+                               HAVING COUNT(*) > 0 AND COUNT(*) = COUNT(es.GivenScore)
+                           ) AS CompletedEmps
+                       ) AS EvaluatedEmployeesCount,
+                       ISNULL((
+                           SELECT SUM(EmpSum.TotalRaw)
+                           FROM (
+                               SELECT CASE
+                                          WHEN SUM(es2.GivenScore) + ISNULL(MAX(adj2.BalancingDelta), 0) > 100 THEN 100
+                                          WHEN SUM(es2.GivenScore) + ISNULL(MAX(adj2.BalancingDelta), 0) < 0 THEN 0
+                                          ELSE SUM(es2.GivenScore) + ISNULL(MAX(adj2.BalancingDelta), 0)
+                                      END AS TotalRaw
+                               FROM dbo.EvaluationScores es2
+                               LEFT JOIN dbo.EvaluationEmployeeAdjustments adj2
+                                   ON adj2.RecordID = es2.RecordID AND adj2.SheetID = es2.SheetID AND adj2.EmployeeID = es2.EmployeeID
+                               WHERE es2.RecordID = er.RecordID
+                               GROUP BY es2.SheetID, es2.EmployeeID
+                               HAVING COUNT(*) > 0 AND COUNT(*) = COUNT(es2.GivenScore)
+                           ) AS EmpSum
+                       ), 0) AS TotalRawScoreSum,
                        ISNULL((
                            SELECT AVG(EmpSum.TotalRaw)
                            FROM (
@@ -1010,6 +1050,7 @@ namespace SchoolEvaluationERP.Services
                                    ON adj2.RecordID = es2.RecordID AND adj2.SheetID = es2.SheetID AND adj2.EmployeeID = es2.EmployeeID
                                WHERE es2.RecordID = er.RecordID
                                GROUP BY es2.SheetID, es2.EmployeeID
+                               HAVING COUNT(*) > 0 AND COUNT(*) = COUNT(es2.GivenScore)
                            ) AS EmpSum
                        ), 0) AS AverageRawScore
                 FROM dbo.EvaluationRecords er
@@ -1409,7 +1450,7 @@ namespace SchoolEvaluationERP.Services
                                         targetEmp.BalancingDelta = savedEmp.BalancingDelta;
                                         for (int c = 0; c < Math.Min(targetEmp.CriteriaCount, savedEmp.CriteriaCount); c++)
                                         {
-                                            targetEmp.SetScoreAt(c, savedEmp.GetScoreAt(c));
+                                            targetEmp.SetScoreAt(c, savedEmp.GetNullableScoreAt(c));
                                         }
                                         if (savedEmp.DirectCalculatedScoreOverride.HasValue)
                                         {
@@ -1543,6 +1584,14 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
+
+
+
 
 
 

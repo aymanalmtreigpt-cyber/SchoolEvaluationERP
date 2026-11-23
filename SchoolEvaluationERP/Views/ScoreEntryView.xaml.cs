@@ -190,9 +190,12 @@ namespace SchoolEvaluationERP.Views
                     BadgeMonthStatus.Background = new SolidColorBrush(Color.FromRgb(254, 243, 199));
                     BadgeMonthStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(252, 211, 77));
                     TxtBadgeMonthStatus.Foreground = new SolidColorBrush(Color.FromRgb(146, 64, 14));
-                    TxtBadgeMonthStatus.Text = canBeModifiedInSystem
-                        ? "🔒 تم إدخال تقييم هذا الشهر مسبقاً (وضع القراءة فقط)"
-                        : "🔒 تم حذف القالب أو الموظفين — هذا السجل مقفل تاريخياً للقراءة فقط";
+                    int savedMissingCount = _currentWorkspace.Sheets.Sum(s => s.EmployeeRows.Count(r => r.HasAnyEmptyCriteria));
+                    TxtBadgeMonthStatus.Text = !canBeModifiedInSystem
+                        ? "🔒 تم حذف القالب أو الموظفين — هذا السجل مقفل تاريخياً للقراءة فقط"
+                        : (savedMissingCount > 0
+                            ? $"⏳ تقييم جزئي محفوظ — متبقي ({savedMissingCount}) موظف لإكماله"
+                            : "🔒 تم إدخال تقييم هذا الشهر مسبقاً (وضع القراءة فقط)");
                     BtnUnlockSavedMonthEdit.Visibility = (CanUpdate && canBeModifiedInSystem) ? Visibility.Visible : Visibility.Collapsed;
                 }
             }
@@ -452,7 +455,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("RowOrder"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 45
+                Width = 48,
+                MinWidth = 48
             });
 
             // العمود 1: الاسم التقييمي
@@ -462,7 +466,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("EvaluationName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 195
+                Width = 195,
+                MinWidth = 175
             });
 
             // العمود 2: الفرع
@@ -472,7 +477,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("BranchName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 85
+                Width = 85,
+                MinWidth = 75
             });
 
             // العمود 3: الوظيفة ونوعها
@@ -482,7 +488,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("FullJobDisplay"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 135
+                Width = 135,
+                MinWidth = 120
             });
 
             // العمود 4: الحافز
@@ -492,7 +499,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("IncentiveBadgeDisplay"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 95
+                Width = 95,
+                MinWidth = 85
             });
 
             var scoreDisplayStyle = new Style(typeof(TextBlock));
@@ -514,9 +522,43 @@ namespace SchoolEvaluationERP.Views
             {
                 var crit = _activeSheet.CriteriaColumns[i];
 
+                string subHeaderText = (_currentWorkspace != null && _currentWorkspace.IsCountBasedEvaluation)
+                    ? $"(الحد المسموح: {_currentWorkspace.MaxAllowedCount} — ما زاد = 0)"
+                    : $"(من {crit.MaxScore:0} درجة)";
+
+                var headerPanel = new StackPanel
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = $"{crit.CriteriaTitle}\n{subHeaderText}"
+                };
+                headerPanel.Children.Add(new TextBlock
+                {
+                    Text = crit.CriteriaTitle,
+                    FontSize = 12,
+                    LineHeight = 17,
+                    LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                    MaxHeight = 54,
+                    TextWrapping = TextWrapping.Wrap,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextAlignment = TextAlignment.Center,
+                    MaxWidth = _activeSheet.CriteriaColumns.Count <= 3 ? 320 : 200,
+                    FontWeight = FontWeights.Bold
+                });
+                headerPanel.Children.Add(new TextBlock
+                {
+                    Text = subHeaderText,
+                    FontSize = 11,
+                    TextWrapping = TextWrapping.Wrap,
+                    TextAlignment = TextAlignment.Center,
+                    MaxWidth = 160,
+                    Margin = new Thickness(0, 1, 0, 0),
+                    Foreground = new SolidColorBrush(Color.FromRgb(51, 65, 85))
+                });
+
                 var col = new DataGridTextColumn
                 {
-                    Header = (_currentWorkspace != null && _currentWorkspace.IsCountBasedEvaluation) ? $"{crit.CriteriaTitle}\n(الحد المسموح: {_currentWorkspace.MaxAllowedCount} — ما زاد = 0)" : $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0})",
+                    Header = headerPanel,
                     Binding = new Binding($"[{i}]")
                     {
                         Mode = BindingMode.TwoWay,
@@ -525,7 +567,10 @@ namespace SchoolEvaluationERP.Views
                     ElementStyle = scoreDisplayStyle,
                     EditingElementStyle = scoreEditStyle,
                     IsReadOnly = !canEditNow,
-                    Width = new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = 125
+                    Width = _activeSheet.CriteriaColumns.Count <= 3
+                        ? new DataGridLength(1, DataGridLengthUnitType.Star)
+                        : new DataGridLength(210),
+                    MinWidth = 145
                 };
 
                 GridWeeklyScores.Columns.Add(col);
@@ -543,7 +588,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("RawTotalDisplay"),
                 ElementStyle = totalStyle,
                 IsReadOnly = true,
-                Width = 100
+                Width = 105,
+                MinWidth = 95
             });
 
             var weightedStyle = new Style(typeof(TextBlock));
@@ -558,7 +604,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("WeightedScoreDisplay"),
                 ElementStyle = weightedStyle,
                 IsReadOnly = true,
-                Width = 115
+                Width = 115,
+                MinWidth = 105
             });
 
             GridWeeklyScores.ItemsSource = null;
@@ -616,9 +663,9 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            var enteredRows = _activeSheet.EmployeeRows.Where(r => !r.IsCompletelyEmpty).ToList();
-            decimal avg = enteredRows.Count == 0 ? 0m : enteredRows.Average(r => r.RawTotalOutOf100);
-            TxtSheetAverageBadge.Text = $"المُقيَّمون بالورقة: {enteredRows.Count} من {_activeSheet.EmployeeRows.Count}  |  متوسط الدرجات: {avg:0.##} من 100";
+            var completedRows = _activeSheet.EmployeeRows.Where(r => !r.HasAnyEmptyCriteria).ToList();
+            decimal avg = completedRows.Count == 0 ? 0m : completedRows.Average(r => r.RawTotalOutOf100);
+            TxtSheetAverageBadge.Text = $"المكتملون بالورقة: {completedRows.Count} من {_activeSheet.EmployeeRows.Count}  |  متوسط الدرجات: {avg:0.##} من 100";
             UpdateMissingScoresNotification();
         }
 
@@ -642,9 +689,19 @@ namespace SchoolEvaluationERP.Views
                 BtnMissingScoresAlert.Background = new SolidColorBrush(Color.FromRgb(254, 242, 242));
                 BtnMissingScoresAlert.BorderBrush = new SolidColorBrush(Color.FromRgb(239, 68, 68));
                 BtnMissingScoresAlert.Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28));
+                bool canOneClickResume = _isReadOnlyMode
+                    && !_currentWorkspace.IsMonthLocked
+                    && _currentWorkspace.RecordID > 0
+                    && _currentWorkspace.CanBeModified
+                    && CanUpdate;
+
+                string actionSuffix = canOneClickResume
+                    ? "اضغط لتفعيل التعديل والانتقال للموظف ⬇"
+                    : "اضغط للانتقال للموظف ⬇";
+
                 BtnMissingScoresAlert.Content = _currentWorkspace.Sheets.Count > 1
-                    ? $"⚠ لم يتم إدخال تقييم لـ ({totalMissing}) موظف ({activeMissing} في هذه الورقة) — اضغط للانتقال للموظف ⬇"
-                    : $"⚠ لم يتم إدخال تقييم لـ ({totalMissing}) موظف — اضغط للانتقال للموظف ⬇";
+                    ? $"⚠ لم يكتمل تقييم ({totalMissing}) موظف ({activeMissing} في هذه الورقة) — {actionSuffix}"
+                    : $"⚠ لم يكتمل تقييم ({totalMissing}) موظف — {actionSuffix}";
             }
             else
             {
@@ -668,6 +725,27 @@ namespace SchoolEvaluationERP.Views
 
         private void BtnMissingScoresAlert_Click(object sender, RoutedEventArgs e)
         {
+            if (_currentWorkspace == null) return;
+
+            int totalMissing = _currentWorkspace.Sheets.Sum(s => s.EmployeeRows.Count(r => r.HasAnyEmptyCriteria));
+            bool canOneClickResume = _isReadOnlyMode
+                && totalMissing > 0
+                && !_currentWorkspace.IsMonthLocked
+                && _currentWorkspace.RecordID > 0
+                && _currentWorkspace.CanBeModified
+                && CanUpdate;
+
+            if (canOneClickResume)
+            {
+                _isReadOnlyMode = false;
+                if (_activeSheet != null)
+                {
+                    ActivateSheet(_activeSheet);
+                }
+                NavigateToNextMissingEmployee(startFromFirst: true);
+                return;
+            }
+
             NavigateToNextMissingEmployee(startFromFirst: false);
         }
 
@@ -925,20 +1003,20 @@ namespace SchoolEvaluationERP.Views
             if (missingCount > 0)
             {
                 var choice = MessageBox.Show(
-                    $"⚠ تنبيه: يوجد ({missingCount}) موظف لم يتم إدخال تقييمهم بعد (خلاياهم فارغة).\n\n" +
-                    "• اضغط (نعم) للانتقال مباشرة إلى أول موظف بدون تقييم لإكمال درجاته.\n" +
-                    "• اضغط (لا) للمتابعة وحفظ الاستمارة مع احتساب الخلايا الفارغة بقيمة (0).\n" +
+                    $"⚠ تنبيه: يوجد ({missingCount}) موظف لم يكتمل إدخال تقييمهم بعد (لديهم خلايا فارغة).\n\n" +
+                    "• اضغط (نعم) للحفظ الجزئي الآن — ستبقى خلاياهم فارغة باللون الأصفر لإكمالها في أي وقت، ولن يدخلوا في التقرير النهائي حتى تكتمل درجاتهم.\n" +
+                    "• اضغط (لا) للانتقال مباشرة إلى أول موظف غير مكتمل لإدخال درجاته الآن.\n" +
                     "• اضغط (إلغاء) للتراجع والبقاء في الصفحة.",
-                    "يوجد موظفون بدون تقييم",
+                    "تأكيد الحفظ الجزئي للتقييم",
                     MessageBoxButton.YesNoCancel,
-                    MessageBoxImage.Warning);
+                    MessageBoxImage.Question);
 
-                if (choice == MessageBoxResult.Yes)
+                if (choice == MessageBoxResult.No)
                 {
                     NavigateToNextMissingEmployee(startFromFirst: true);
                     return;
                 }
-                if (choice != MessageBoxResult.No)
+                if (choice != MessageBoxResult.Yes)
                 {
                     return;
                 }
@@ -961,6 +1039,18 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

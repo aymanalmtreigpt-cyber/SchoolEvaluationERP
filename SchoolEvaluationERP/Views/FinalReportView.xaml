@@ -106,8 +106,14 @@
                                       IsChecked="True" FontWeight="SemiBold" VerticalAlignment="Bottom" Margin="0,0,16,10"
                                       Checked="ChkOption_Changed" Unchecked="ChkOption_Changed"/>
 
-                            <CheckBox x:Name="ChkOnlyDeserving" Content="إظهار المستحقين للحافز فقط (> 0)"
-                                      IsChecked="False" FontWeight="SemiBold" VerticalAlignment="Bottom" Margin="0,0,0,10"
+                            <CheckBox x:Name="ChkOnlyDeserving" Content="إظهار المستحقين للحافز فقط (&gt; 80%)"
+                                      IsChecked="False" FontWeight="SemiBold" VerticalAlignment="Bottom" Margin="0,0,16,10"
+                                      ToolTip="عرض الموظفين المشمولين بالحافز الذين حققوا معدل تقييم أعلى من 80% (81% فأعلى) فقط"
+                                      Checked="ChkOption_Changed" Unchecked="ChkOption_Changed"/>
+
+                            <CheckBox x:Name="ChkOnlyIncomplete" Content="إظهار الموظفين غير المكتملين فقط ⚠"
+                                      IsChecked="False" FontWeight="SemiBold" Foreground="#B45309" VerticalAlignment="Bottom" Margin="0,0,0,10"
+                                      ToolTip="عرض الموظفين الذين حالتهم (غير مكتمل ⚠) وينقصهم تقييم مقيم واحد أو أكثر"
                                       Checked="ChkOption_Changed" Unchecked="ChkOption_Changed"/>
                         </WrapPanel>
                     </StackPanel>
@@ -196,5 +202,6 @@
         </Border>
     </Grid>
 </UserControl>
+
 
 

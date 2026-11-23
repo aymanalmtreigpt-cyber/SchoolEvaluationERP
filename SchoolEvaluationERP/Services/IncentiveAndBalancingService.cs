@@ -143,7 +143,8 @@ namespace SchoolEvaluationERP.Services
                 LEFT JOIN dbo.EvaluationEmployeeAdjustments adj
                     ON adj.RecordID = es.RecordID AND adj.SheetID = es.SheetID AND adj.EmployeeID = es.EmployeeID
                 WHERE er.EvalYear = @Year AND er.EvalMonth = @Month
-                GROUP BY es.EmployeeID, er.EvaluatorID, ev.GroupID, es.SheetID";
+                GROUP BY es.EmployeeID, er.EvaluatorID, ev.GroupID, es.SheetID
+                HAVING COUNT(*) > 0 AND COUNT(*) = COUNT(es.GivenScore)";
 
             var rawScores = (await conn.QueryAsync<RawEvalScoreWithDelta>(scoresSql, new { Year = year, Month = month })).ToList();
             var scoresByEmployee = rawScores
@@ -381,6 +382,7 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
 
 
 

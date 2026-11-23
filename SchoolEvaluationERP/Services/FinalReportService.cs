@@ -55,7 +55,8 @@ namespace SchoolEvaluationERP.Services
             int? filterCategoryId = null,
             string searchQuery = "",
             bool onlyDeservingIncentive = false,
-            bool ignoreLockedSnapshot = false)
+            bool ignoreLockedSnapshot = false,
+            bool onlyIncompleteEvaluations = false)
         {
             using var conn = new SqlConnection(_connectionString);
             await DatabaseSchemaService.EnsureSchemaV2Async(conn);
@@ -97,7 +98,15 @@ namespace SchoolEvaluationERP.Services
                         }
 
                         if (onlyDeservingIncentive)
-                            filteredRows = filteredRows.Where(r => r.FinalIncentiveAmount > 0m);
+                        {
+                            bool hasAnyFrozenPayout = (frozen.Rows ?? new List<EmployeeMonthlyReportRowDto>()).Any(r => r.FinalIncentiveAmount > 0m);
+                            filteredRows = hasAnyFrozenPayout
+                                ? filteredRows.Where(r => r.HasIncentive && r.MonthlyEvaluationAverage > 80m && r.FinalIncentiveAmount > 0m)
+                                : filteredRows.Where(r => r.HasIncentive && r.MonthlyEvaluationAverage >= 81m);
+                        }
+
+                        if (onlyIncompleteEvaluations)
+                            filteredRows = filteredRows.Where(r => !r.IsAllEvaluatorsCompleted);
 
                         var finalFrozenList = filteredRows.ToList();
                         for (int i = 0; i < finalFrozenList.Count; i++)
@@ -174,6 +183,8 @@ namespace SchoolEvaluationERP.Services
                 new { Year = year, Month = month }))
                 .ToDictionary(k => (int)k.CategoryID, v => (MaxAmt: (decimal)v.MaxIncentiveAmount, MinAmt: (decimal)v.MinIncentiveAmount));
 
+            bool hasAnyCategoryIncentiveConfigured = categoryIncentiveMap.Values.Any(v => v.MaxAmt > 0m);
+
             var empAssignedEvals = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, year, month);
             var empAssignedMap = empAssignedEvals
                 .GroupBy(x => x.EmployeeID)
@@ -198,7 +209,8 @@ namespace SchoolEvaluationERP.Services
                 LEFT JOIN dbo.EvaluationEmployeeAdjustments adj
                     ON adj.RecordID = es.RecordID AND adj.SheetID = es.SheetID AND adj.EmployeeID = es.EmployeeID
                 WHERE er.EvalYear = @Year AND er.EvalMonth = @Month
-                GROUP BY es.EmployeeID, er.EvaluatorID, ev.GroupID, eg.GroupName, ev.EvaluatorName, es.SheetID";
+                GROUP BY es.EmployeeID, er.EvaluatorID, ev.GroupID, eg.GroupName, ev.EvaluatorName, es.SheetID
+                HAVING COUNT(*) > 0 AND COUNT(*) = COUNT(es.GivenScore)";
 
             var rawScores = (await conn.QueryAsync<RawMonthlyEvaluatorScore>(scoresSql, new
             {
@@ -374,7 +386,16 @@ namespace SchoolEvaluationERP.Services
                     emp.EntryDateFormatted = calc.EntryDateFormatted;
                 }
 
-                if (onlyDeservingIncentive && emp.FinalIncentiveAmount <= 0m)
+                if (onlyDeservingIncentive)
+                {
+                    bool isDeserving = hasAnyCategoryIncentiveConfigured
+                        ? (emp.HasIncentive && emp.MonthlyEvaluationAverage > 80m && emp.FinalIncentiveAmount > 0m)
+                        : (emp.HasIncentive && emp.MonthlyEvaluationAverage >= 81m);
+                    if (!isDeserving)
+                        continue;
+                }
+
+                if (onlyIncompleteEvaluations && emp.IsAllEvaluatorsCompleted)
                     continue;
 
                 finalRows.Add(emp);
@@ -742,6 +763,11 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
 
 
 

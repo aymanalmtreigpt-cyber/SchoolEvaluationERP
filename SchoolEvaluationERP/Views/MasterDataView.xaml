@@ -333,7 +333,7 @@
                         </Grid.RowDefinitions>
 
                         <StackPanel Grid.Row="0" Margin="0,0,0,8">
-                            <TextBlock Text="إدارة الموظفين واستيراد الموظفين والمقيمين بنظام المصفوفة (1 / 0)" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
+                            <TextBlock Text="إدارة الموظفين واستيراد الموظفين والمقيمين" FontSize="16" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}" TextWrapping="Wrap"/>
                             <TextBlock Text="يدعم التحديد المتعدد، والفتح بالدبل كليك السريع، وإلغاء التحديد بالضغط على العنصر المحدد مرة ثانية."
                                        FontSize="12" Foreground="{StaticResource TextSecondaryBrush}" TextWrapping="Wrap" Margin="0,2,0,6"/>
 
@@ -415,5 +415,6 @@
         </TabControl>
     </Grid>
 </UserControl>
+
 
 

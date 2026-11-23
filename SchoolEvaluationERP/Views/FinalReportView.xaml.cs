@@ -80,6 +80,7 @@ namespace SchoolEvaluationERP.Views
 
             bool round50 = ChkRoundTo50.IsChecked == true;
             bool onlyDeserving = ChkOnlyDeserving.IsChecked == true;
+            bool onlyIncomplete = ChkOnlyIncomplete.IsChecked == true;
             int? branchId = (CmbBranch.SelectedItem as FilterOptionItem)?.Value;
             int? categoryId = (CmbCategory.SelectedItem as FilterOptionItem)?.Value;
             string search = TxtSearchEmployee.Text.Trim();
@@ -94,7 +95,9 @@ namespace SchoolEvaluationERP.Views
                 branchId,
                 categoryId,
                 search,
-                onlyDeserving);
+                onlyDeserving,
+                ignoreLockedSnapshot: false,
+                onlyIncompleteEvaluations: onlyIncomplete);
 
             GridAccountingJournal.ItemsSource = _currentReport.Rows;
             GridDetailedBreakdown.ItemsSource = _currentReport.Rows;
@@ -340,6 +343,7 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
 
 
 

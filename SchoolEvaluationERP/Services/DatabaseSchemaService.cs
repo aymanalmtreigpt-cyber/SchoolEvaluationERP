@@ -496,7 +496,7 @@ namespace SchoolEvaluationERP.Services
                         SheetID INT NOT NULL,
                         EmployeeID INT NOT NULL,
                         CriteriaID INT NOT NULL,
-                        GivenScore DECIMAL(5,2) NOT NULL CHECK (GivenScore >= 0),
+                        GivenScore DECIMAL(5,2) NULL CHECK (GivenScore IS NULL OR GivenScore >= 0),
                         SnapshotEvaluatorWeight DECIMAL(5,2) NOT NULL,
                         SnapshotEvaluationName NVARCHAR(200) NULL,
                         SnapshotSystemName NVARCHAR(250) NULL,
@@ -613,6 +613,36 @@ namespace SchoolEvaluationERP.Services
                     ALTER TABLE dbo.EvaluationScores ADD SnapshotCriteriaOrder INT NOT NULL CONSTRAINT DF_EvalScore_SnapCritOrd DEFAULT (1);
                 IF COL_LENGTH('dbo.EvaluationScores', 'RawEnteredCount') IS NULL
                     ALTER TABLE dbo.EvaluationScores ADD RawEnteredCount INT NULL;
+
+                IF EXISTS (
+                    SELECT 1 FROM sys.columns
+                    WHERE object_id = OBJECT_ID('dbo.EvaluationScores')
+                      AND name = 'GivenScore'
+                      AND is_nullable = 0
+                )
+                BEGIN
+                    DECLARE @ckGivenName NVARCHAR(256);
+                    DECLARE ck_given_cur CURSOR LOCAL FAST_FORWARD FOR
+                        SELECT cc.name
+                        FROM sys.check_constraints cc
+                        LEFT JOIN sys.columns c
+                            ON c.object_id = cc.parent_object_id AND c.column_id = cc.parent_column_id
+                        WHERE cc.parent_object_id = OBJECT_ID('dbo.EvaluationScores')
+                          AND (c.name = 'GivenScore' OR cc.definition LIKE '%GivenScore%');
+                    OPEN ck_given_cur;
+                    FETCH NEXT FROM ck_given_cur INTO @ckGivenName;
+                    WHILE @@FETCH_STATUS = 0
+                    BEGIN
+                        EXEC(N'ALTER TABLE dbo.EvaluationScores DROP CONSTRAINT [' + @ckGivenName + N'];');
+                        FETCH NEXT FROM ck_given_cur INTO @ckGivenName;
+                    END
+                    CLOSE ck_given_cur;
+                    DEALLOCATE ck_given_cur;
+
+                    ALTER TABLE dbo.EvaluationScores ALTER COLUMN GivenScore DECIMAL(5,2) NULL;
+                    IF OBJECT_ID('dbo.CK_EvaluationScores_GivenScore_NonNeg', 'C') IS NULL
+                        ALTER TABLE dbo.EvaluationScores ADD CONSTRAINT CK_EvaluationScores_GivenScore_NonNeg CHECK (GivenScore IS NULL OR GivenScore >= 0);
+                END
 
                 IF COL_LENGTH('dbo.EvaluatorGroups', 'IsSystemGroup') IS NULL
                     ALTER TABLE dbo.EvaluatorGroups ADD IsSystemGroup BIT NOT NULL CONSTRAINT DF_EvalGrp_IsSys DEFAULT (0);
@@ -859,6 +889,8 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
 
 
 

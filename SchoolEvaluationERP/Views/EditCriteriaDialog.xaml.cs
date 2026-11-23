@@ -1,6 +1,8 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using SchoolEvaluationERP.Models;
 
 namespace SchoolEvaluationERP.Views
@@ -18,7 +20,9 @@ namespace SchoolEvaluationERP.Views
             InitializeComponent();
             _otherColumnsSum = (int)Math.Round(otherColumnsSum, 0, MidpointRounding.AwayFromZero);
 
-            TxtCriteriaTitle.Text = currentTitle;
+            string cleanInitial = (currentTitle ?? string.Empty).Replace("\r", " ").Replace("\n", " ").Trim();
+            TxtCriteriaTitle.Text = cleanInitial.Length > 80 ? cleanInitial[..80] : cleanInitial;
+            UpdateTitleCharCount();
             TxtMaxScore.Text = Math.Round(currentScore, 0, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture);
             BtnDeleteCol.Visibility = canDeleteColumn ? Visibility.Visible : Visibility.Collapsed;
 
@@ -38,12 +42,39 @@ namespace SchoolEvaluationERP.Views
             TxtMaxScore.Text = remaining.ToString(CultureInfo.InvariantCulture);
         }
 
+        private void TxtCriteriaTitle_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            UpdateTitleCharCount();
+        }
+
+        private void UpdateTitleCharCount()
+        {
+            if (TxtTitleCharCount == null || TxtCriteriaTitle == null) return;
+            int len = TxtCriteriaTitle.Text.Length;
+            TxtTitleCharCount.Text = $"{len} / 80 حرف";
+            TxtTitleCharCount.Foreground = len >= 80
+                ? new SolidColorBrush(Color.FromRgb(185, 28, 28))
+                : (len >= 65
+                    ? new SolidColorBrush(Color.FromRgb(180, 83, 9))
+                    : new SolidColorBrush(Color.FromRgb(100, 116, 139)));
+        }
+
         private void BtnSave_Click(object sender, RoutedEventArgs e)
         {
-            string title = TxtCriteriaTitle.Text.Trim();
+            string title = string.Join(" ", TxtCriteriaTitle.Text
+                .Replace("\r", " ")
+                .Replace("\n", " ")
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries));
+
             if (string.IsNullOrWhiteSpace(title))
             {
                 MessageBox.Show("يرجى إدخال تسمية مبدأ التقييم.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (title.Length > 80)
+            {
+                MessageBox.Show("الحد الأقصى لطول تسمية مبدأ التقييم هو 80 حرفاً فقط.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -79,3 +110,6 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+

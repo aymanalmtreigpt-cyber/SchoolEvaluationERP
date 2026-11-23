@@ -184,7 +184,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("RowOrder"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 45
+                Width = 48,
+                MinWidth = 48
             });
 
             GridBalancingScores.Columns.Add(new DataGridTextColumn
@@ -193,7 +194,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("EvaluationName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 195
+                Width = 195,
+                MinWidth = 175
             });
 
             GridBalancingScores.Columns.Add(new DataGridTextColumn
@@ -202,7 +204,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("BranchName"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 80
+                Width = 85,
+                MinWidth = 75
             });
 
             GridBalancingScores.Columns.Add(new DataGridTextColumn
@@ -211,7 +214,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("FullJobDisplay"),
                 ElementStyle = wrapStyle,
                 IsReadOnly = true,
-                Width = 130
+                Width = 135,
+                MinWidth = 120
             });
 
             var critCellStyle = new Style(typeof(TextBlock));
@@ -223,13 +227,44 @@ namespace SchoolEvaluationERP.Views
             for (int i = 0; i < _activeSheet.CriteriaColumns.Count; i++)
             {
                 var crit = _activeSheet.CriteriaColumns[i];
+                var critHdr = new StackPanel
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = $"{crit.CriteriaTitle} (من {crit.MaxScore:0} درجة)"
+                };
+                critHdr.Children.Add(new TextBlock
+                {
+                    Text = crit.CriteriaTitle,
+                    FontSize = 12,
+                    LineHeight = 17,
+                    LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                    MaxHeight = 54,
+                    TextWrapping = TextWrapping.Wrap,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextAlignment = TextAlignment.Center,
+                    MaxWidth = _activeSheet.CriteriaColumns.Count <= 3 ? 300 : 195,
+                    FontWeight = FontWeights.Bold
+                });
+                critHdr.Children.Add(new TextBlock
+                {
+                    Text = $"(من {crit.MaxScore:0} درجة)",
+                    FontSize = 11,
+                    TextAlignment = TextAlignment.Center,
+                    Margin = new Thickness(0, 1, 0, 0),
+                    Foreground = new SolidColorBrush(Color.FromRgb(51, 65, 85))
+                });
+
                 GridBalancingScores.Columns.Add(new DataGridTextColumn
                 {
-                    Header = $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0})",
+                    Header = critHdr,
                     Binding = new Binding($"[{i}]"),
                     ElementStyle = critCellStyle,
                     IsReadOnly = true,
-                    Width = new DataGridLength(0.85, DataGridLengthUnitType.Star), MinWidth = 120
+                    Width = _activeSheet.CriteriaColumns.Count <= 3
+                        ? new DataGridLength(0.85, DataGridLengthUnitType.Star)
+                        : new DataGridLength(205),
+                    MinWidth = 140
                 });
             }
 
@@ -245,7 +280,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("RawCriteriaSumDisplay"),
                 ElementStyle = beforeStyle,
                 IsReadOnly = true,
-                Width = 105
+                Width = 105,
+                MinWidth = 95
             });
 
             var deltaDisplayStyle = new Style(typeof(TextBlock));
@@ -273,7 +309,8 @@ namespace SchoolEvaluationERP.Views
                 ElementStyle = deltaDisplayStyle,
                 EditingElementStyle = deltaEditStyle,
                 IsReadOnly = !canEdit,
-                Width = 135
+                Width = 135,
+                MinWidth = 125
             });
 
             var afterStyle = new Style(typeof(TextBlock));
@@ -289,7 +326,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("RawTotalDisplay"),
                 ElementStyle = afterStyle,
                 IsReadOnly = true,
-                Width = 110
+                Width = 110,
+                MinWidth = 100
             });
 
             var weightedStyle = new Style(typeof(TextBlock));
@@ -304,7 +342,8 @@ namespace SchoolEvaluationERP.Views
                 Binding = new Binding("WeightedScoreDisplay"),
                 ElementStyle = weightedStyle,
                 IsReadOnly = true,
-                Width = 115
+                Width = 115,
+                MinWidth = 105
             });
 
             foreach (var row in _activeSheet.EmployeeRows)
@@ -355,19 +394,28 @@ namespace SchoolEvaluationERP.Views
         {
             if (_currentWorkspace == null || _activeSheet == null) return;
 
-            if (_activeSheet.EmployeeRows.Count > 0)
+            var completedSheetRows = _activeSheet.EmployeeRows.Where(r => !r.HasAnyEmptyCriteria).ToList();
+            if (completedSheetRows.Count > 0)
             {
-                decimal sheetBefore = _activeSheet.EmployeeRows.Average(r => r.RawCriteriaSumOutOf100);
-                decimal sheetAfter = _activeSheet.EmployeeRows.Average(r => r.RawTotalOutOf100);
-                TxtSheetAverageComparison.Text = $"متوسط الورقة قبل الموازنة: {sheetBefore:0.##}%   |   بعد الموازنة: {sheetAfter:0.##}%";
+                decimal sheetBefore = completedSheetRows.Average(r => r.RawCriteriaSumOutOf100);
+                decimal sheetAfter = completedSheetRows.Average(r => r.RawTotalOutOf100);
+                TxtSheetAverageComparison.Text = $"متوسط الورقة ({completedSheetRows.Count} مكتمل) — قبل الموازنة: {sheetBefore:0.##}%   |   بعد الموازنة: {sheetAfter:0.##}%";
+            }
+            else
+            {
+                TxtSheetAverageComparison.Text = "متوسط الورقة قبل الموازنة: 0%   |   بعد الموازنة: 0%";
             }
 
-            var allTemplateRows = _currentWorkspace.Sheets.SelectMany(s => s.EmployeeRows).ToList();
-            if (allTemplateRows.Count > 0)
+            var completedAllRows = _currentWorkspace.Sheets.SelectMany(s => s.EmployeeRows).Where(r => !r.HasAnyEmptyCriteria).ToList();
+            if (completedAllRows.Count > 0)
             {
-                decimal allBefore = allTemplateRows.Average(r => r.RawCriteriaSumOutOf100);
-                decimal allAfter = allTemplateRows.Average(r => r.RawTotalOutOf100);
-                TxtBadgeRecordAverage.Text = $"متوسط القالب كاملًا ({allTemplateRows.Count} موظف) — قبل: {allBefore:0.##}%  ⬅  بعد الموازنة: {allAfter:0.##}%";
+                decimal allBefore = completedAllRows.Average(r => r.RawCriteriaSumOutOf100);
+                decimal allAfter = completedAllRows.Average(r => r.RawTotalOutOf100);
+                TxtBadgeRecordAverage.Text = $"متوسط القالب ({completedAllRows.Count} مكتمل) — قبل: {allBefore:0.##}%  ⬅  بعد الموازنة: {allAfter:0.##}%";
+            }
+            else
+            {
+                TxtBadgeRecordAverage.Text = "متوسط القالب: لا يوجد موظفون مكتملون بعد";
             }
         }
 
@@ -576,5 +624,15 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
 
 

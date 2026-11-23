@@ -48,7 +48,7 @@
                                 Style="{StaticResource SidebarNavButton}" Tag="IncentiveBasics"
                                 Click="NavButton_Click"/>
 
-                        <Button x:Name="NavTemplates" Content="📝  3. قوالب التقييم (A4 / Excel)"
+                        <Button x:Name="NavTemplates" Content="📝  3. قوالب التقييم (Excel)"
                                 Style="{StaticResource SidebarNavButton}" Tag="Templates"
                                 Click="NavButton_Click"/>
 
@@ -151,5 +151,6 @@
         </Grid>
     </Grid>
 </Window>
+
 
 

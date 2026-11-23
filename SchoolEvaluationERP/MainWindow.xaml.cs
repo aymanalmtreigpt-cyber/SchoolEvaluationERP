@@ -134,7 +134,7 @@ namespace SchoolEvaluationERP
                     break;
 
                 case "Templates":
-                    TxtActivePageTitle.Text = "إنشاء وتجهيز قوالب التقييم متعددة الأوراق (A4 PDF / Excel)";
+                    TxtActivePageTitle.Text = "إنشاء وتجهيز قوالب التقييم متعددة الأوراق (Excel)";
                     MainContentHost.Content = new TemplatesView();
                     break;
 
@@ -203,3 +203,4 @@ namespace SchoolEvaluationERP
         }
     }
 }
+

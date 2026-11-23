@@ -118,15 +118,6 @@ namespace SchoolEvaluationERP.Views
             }
         }
 
-        private async void BtnRowViewReadOnly_Click(object sender, RoutedEventArgs e)
-        {
-            if (sender is Button btn && btn.DataContext is EvaluationRecordSummaryDto rowDto)
-            {
-                GridHistoryRecords.SelectedItem = rowDto;
-                await LoadRecordIntoDetailsAsync(rowDto.RecordID, switchToDetailsTab: true);
-            }
-        }
-
         private async void BtnViewSelectedRecord_Click(object sender, RoutedEventArgs e)
         {
             if (GridHistoryRecords.SelectedItem is not EvaluationRecordSummaryDto selected)
@@ -177,6 +168,7 @@ namespace SchoolEvaluationERP.Views
             TxtDetailsSubInfo.Text = $"أُدخل بواسطة: {_currentRecordWorkspace.CreatedByUserName}   |   تاريخ الإدخال: {_currentRecordWorkspace.CreatedAt:yyyy-MM-dd hh:mm tt}   |   حالة القالب: {lockNote}";
 
             BadgeDetailsMode.Visibility = Visibility.Visible;
+            UpdateTemplateOverallSummaryBadges();
 
             ApplyEmployeeSearchFilterToDetailGrid();
         }
@@ -249,14 +241,44 @@ namespace SchoolEvaluationERP.Views
             {
                 var crit = _activeDetailSheet.CriteriaColumns[i];
 
+                var critHdr = new StackPanel
+                {
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    ToolTip = $"{crit.CriteriaTitle} (من {crit.MaxScore:0} درجة)"
+                };
+                critHdr.Children.Add(new TextBlock
+                {
+                    Text = crit.CriteriaTitle,
+                    FontSize = 12,
+                    LineHeight = 17,
+                    LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                    MaxHeight = 54,
+                    TextWrapping = TextWrapping.Wrap,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextAlignment = TextAlignment.Center,
+                    MaxWidth = _activeDetailSheet.CriteriaColumns.Count <= 3 ? 300 : 195,
+                    FontWeight = FontWeights.Bold
+                });
+                critHdr.Children.Add(new TextBlock
+                {
+                    Text = $"(من {crit.MaxScore:0} درجة)",
+                    FontSize = 11,
+                    TextAlignment = TextAlignment.Center,
+                    Margin = new Thickness(0, 1, 0, 0),
+                    Foreground = new SolidColorBrush(Color.FromRgb(51, 65, 85))
+                });
+
                 var col = new DataGridTextColumn
                 {
-                    Header = $"{crit.CriteriaTitle}\n(من {crit.MaxScore:0})",
+                    Header = critHdr,
                     Binding = new Binding($"[{i}]"),
                     ElementStyle = scoreDisplayStyle,
                     IsReadOnly = true,
-                    Width = new DataGridLength(1, DataGridLengthUnitType.Star),
-                    MinWidth = 125
+                    Width = _activeDetailSheet.CriteriaColumns.Count <= 3
+                        ? new DataGridLength(1, DataGridLengthUnitType.Star)
+                        : new DataGridLength(205),
+                    MinWidth = 140
                 };
 
                 GridRecordSheetScores.Columns.Add(col);
@@ -565,8 +587,10 @@ namespace SchoolEvaluationERP.Views
             }
             else
             {
-                decimal avg = matchedRows.Average(r => r.SourceEmployee.RawTotalOutOf100);
-                TxtDetailSheetAverageBadge.Text = $"متوسط نتائج البحث ({matchedRows.Count} موظف): {avg:0.##} من 100";
+                var completedMatched = matchedRows.Where(r => !r.SourceEmployee.HasAnyEmptyCriteria).ToList();
+                decimal sum = completedMatched.Sum(r => r.SourceEmployee.RawTotalOutOf100);
+                decimal avg = completedMatched.Count == 0 ? 0m : completedMatched.Average(r => r.SourceEmployee.RawTotalOutOf100);
+                TxtDetailSheetAverageBadge.Text = $"نتائج البحث ({completedMatched.Count}/{matchedRows.Count} مكتمل)  |  مجموع الدرجات: {sum:#,##0.##}  |  المتوسط: {avg:0.##}%";
             }
         }
 
@@ -596,6 +620,33 @@ namespace SchoolEvaluationERP.Views
             }
         }
 
+        private void UpdateTemplateOverallSummaryBadges()
+        {
+            if (_currentRecordWorkspace == null || _currentRecordWorkspace.Sheets.Count == 0)
+            {
+                PanelTemplateSummaryBadges.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            var allRows = _currentRecordWorkspace.Sheets.SelectMany(s => s.EmployeeRows).ToList();
+            var completedRows = allRows.Where(r => !r.HasAnyEmptyCriteria).ToList();
+
+            decimal totalEarnedScores = completedRows.Sum(r => r.RawTotalOutOf100);
+            decimal totalMaxScores = completedRows.Count * 100m;
+            decimal overallAverage = completedRows.Count == 0
+                ? 0m
+                : Math.Round(completedRows.Average(r => r.RawTotalOutOf100), 2, MidpointRounding.AwayFromZero);
+
+            TxtTemplateTotalEmployeesBadge.Text = completedRows.Count == allRows.Count
+                ? $"👥 موظفو القالب المكتملون: {completedRows.Count} موظف ({_currentRecordWorkspace.Sheets.Count} أوراق)"
+                : $"👥 موظفو القالب المكتملون: {completedRows.Count} من {allRows.Count} موظف ({_currentRecordWorkspace.Sheets.Count} أوراق)";
+
+            TxtTemplateTotalScoresBadge.Text = $"🏆 مجموع الدرجات التي حصل عليها الموظفون بالقالب: {totalEarnedScores:#,##0.##} من {totalMaxScores:#,##0} درجة";
+            TxtTemplateOverallAverageBadge.Text = $"📊 متوسط التقييم العام للقالب: {overallAverage:0.##}% (من 100)";
+
+            PanelTemplateSummaryBadges.Visibility = Visibility.Visible;
+        }
+
         private void UpdateDetailSheetAverageBadge()
         {
             if (_activeDetailSheet == null || _activeDetailSheet.EmployeeRows.Count == 0)
@@ -604,8 +655,10 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            decimal avg = _activeDetailSheet.EmployeeRows.Average(r => r.RawTotalOutOf100);
-            TxtDetailSheetAverageBadge.Text = $"متوسط درجات الورقة الحالية ({_activeDetailSheet.EmployeeRows.Count} موظف): {avg:0.##} من 100";
+            var completedRows = _activeDetailSheet.EmployeeRows.Where(r => !r.HasAnyEmptyCriteria).ToList();
+            decimal sum = completedRows.Sum(r => r.RawTotalOutOf100);
+            decimal avg = completedRows.Count == 0 ? 0m : completedRows.Average(r => r.RawTotalOutOf100);
+            TxtDetailSheetAverageBadge.Text = $"الورقة: {completedRows.Count}/{_activeDetailSheet.EmployeeRows.Count} مكتمل  |  مجموع الدرجات: {sum:#,##0.##}  |  المتوسط: {avg:0.##}%";
         }
 
         private void RebuildDetailBottomSheetTabsBar(Dictionary<WeeklyEntrySheetModel, int>? searchMatchCounts = null)
@@ -670,6 +723,16 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
 
 
 

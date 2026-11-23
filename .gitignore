@@ -3,3 +3,11 @@ bin/
 obj/
 *.user
 *.suo
+**/bin/
+**/obj/
+*_Client/
+*.zip
+*.msi
+*.mdf
+*.ldf
+*.bak

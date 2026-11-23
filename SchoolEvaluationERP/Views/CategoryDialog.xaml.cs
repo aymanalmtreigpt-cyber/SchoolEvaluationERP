@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using SchoolEvaluationERP.Models;
 using SchoolEvaluationERP.Services;
@@ -89,6 +90,31 @@ namespace SchoolEvaluationERP.Views
         private void GroupRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             UpdateLiveTotalCounter();
+        }
+
+        private void GridEvaluatorGroups_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            var dep = e.OriginalSource as DependencyObject;
+            while (dep != null && dep is not DataGridCell)
+            {
+                dep = (dep is Visual || dep is System.Windows.Media.Media3D.Visual3D)
+                    ? VisualTreeHelper.GetParent(dep)
+                    : LogicalTreeHelper.GetParent(dep);
+            }
+
+            if (dep is not DataGridCell cell || cell.DataContext is not CategoryEvaluatorGroupSelectRow row)
+                return;
+
+            if (ReferenceEquals(cell.Column, ColSelectGroup))
+            {
+                GridEvaluatorGroups.CommitEdit(DataGridEditingUnit.Cell, true);
+                GridEvaluatorGroups.CommitEdit(DataGridEditingUnit.Row, true);
+
+                row.IsSelected = !row.IsSelected;
+                GridEvaluatorGroups.SelectedItem = row;
+                UpdateLiveTotalCounter();
+                e.Handled = true;
+            }
         }
 
         private void UpdateLiveTotalCounter()
@@ -181,6 +207,8 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
 
 
 

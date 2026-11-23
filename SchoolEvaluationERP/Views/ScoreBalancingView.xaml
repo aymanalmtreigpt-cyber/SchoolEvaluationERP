@@ -11,7 +11,7 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*" MinHeight="180"/>
+                    <RowDefinition Height="*" MinHeight="95"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
@@ -162,3 +162,4 @@
         </Border>
     </Grid>
 </UserControl>
+

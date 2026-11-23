@@ -843,6 +843,15 @@ namespace SchoolEvaluationERP.Services
             if (model.Sheets.Count == 0)
                 return (false, "يجب أن يحتوي القالب على ورقة تقييم واحدة على الأقل.", 0);
 
+            if (!model.IsSystemTemplate && model.Sheets.Count > 1 && model.Sheets.Any(s => s.EmployeeRows.Count > 0))
+            {
+                var emptySheets = model.Sheets.Where(s => s.EmployeeRows.Count == 0).ToList();
+                foreach (var emptySheet in emptySheets)
+                {
+                    model.Sheets.Remove(emptySheet);
+                }
+            }
+
             foreach (var sheet in model.Sheets)
             {
                 if (string.IsNullOrWhiteSpace(sheet.SheetName))
@@ -1161,27 +1170,37 @@ namespace SchoolEvaluationERP.Services
                     }
                 }
 
-                // حفظ ذاكرة الموظفين الذين تم حذفهم يدوياً أو إرجاعهم يدوياً في قالب الغياب أو التأخير
+                // [EXCLUSION_MEMORY_V3] حفظ ذاكرة الموظفين المحذوفين يدوياً أو المُعاد إضافتهم يدوياً لكل من القوالب العادية وقوالب النظام
+                var (sYear, sMonth) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth, tx);
+                var contEmpsForExcl = await LoadEffectiveContinuingEmployeesAsync(conn, sYear, sMonth, tx);
+
                 if (isSystemGroup && sysGroupId > 0)
                 {
-                    var allEligibleIds = (await conn.QueryAsync<int>(@"
-                        SELECT e.EmployeeID
-                        FROM dbo.Employees e
-                        INNER JOIN dbo.CategoryEvaluatorGroups ceg ON e.CategoryID = ceg.CategoryID
-                        WHERE ceg.GroupID = @GID AND e.IsActive = 1 AND e.IsContinuing = 1",
-                        new { GID = sysGroupId }, tx)).ToList();
+                    var effWeightsForSys = await MonthlyPeriodConfigService.GetEffectiveCategoryWeightsAsync(conn, sYear, sMonth, tx);
+                    var sysCatIds = effWeightsForSys
+                        .Where(w => w.GroupID == sysGroupId)
+                        .Select(w => w.CategoryID)
+                        .ToHashSet();
 
-                    await conn.ExecuteAsync(
-                        "DELETE FROM dbo.SystemTemplateExcludedEmployees WHERE GroupID = @GID",
-                        new { GID = sysGroupId }, tx);
+                    var allEligibleIds = contEmpsForExcl
+                        .Where(e => sysCatIds.Contains(e.CategoryID))
+                        .Select(e => e.EmployeeID)
+                        .ToList();
+
+                    foreach (int keptId in keptEmployeeIdsInTemplate)
+                    {
+                        await conn.ExecuteAsync(
+                            "DELETE FROM dbo.SystemTemplateExcludedEmployees WHERE GroupID = @GID AND EmployeeID = @EmpID",
+                            new { GID = sysGroupId, EmpID = keptId }, tx);
+                    }
 
                     foreach (int empId in allEligibleIds)
                     {
                         if (!keptEmployeeIdsInTemplate.Contains(empId))
                         {
                             await conn.ExecuteAsync(@"
-                                INSERT INTO dbo.SystemTemplateExcludedEmployees (GroupID, EmployeeID)
-                                VALUES (@GID, @EmpID)",
+                                IF NOT EXISTS (SELECT 1 FROM dbo.SystemTemplateExcludedEmployees WHERE GroupID = @GID AND EmployeeID = @EmpID)
+                                    INSERT INTO dbo.SystemTemplateExcludedEmployees (GroupID, EmployeeID) VALUES (@GID, @EmpID);",
                                 new { GID = sysGroupId, EmpID = empId }, tx);
                         }
                     }
@@ -1207,6 +1226,32 @@ namespace SchoolEvaluationERP.Services
                               WHERE ee.EmployeeID = e.EmployeeID AND ee.EvaluatorID = @EvalID
                           );",
                         new { GID = sysGroupId, EvalID = model.EvaluatorID }, tx);
+                }
+                else
+                {
+                    var effAssignsForExcl = await MonthlyPeriodConfigService.GetEffectiveEmployeeAssignmentsAsync(conn, sYear, sMonth, tx);
+                    var assignedToThisEval = effAssignsForExcl
+                        .Where(a => a.EvaluatorID == model.EvaluatorID)
+                        .Select(a => a.EmployeeID)
+                        .ToHashSet();
+
+                    foreach (int keptId in keptEmployeeIdsInTemplate)
+                    {
+                        await conn.ExecuteAsync(
+                            "DELETE FROM dbo.TemplateExcludedEmployees WHERE EvaluatorID = @EvalID AND EmployeeID = @EmpID",
+                            new { EvalID = model.EvaluatorID, EmpID = keptId }, tx);
+                    }
+
+                    foreach (var emp in contEmpsForExcl)
+                    {
+                        if (!assignedToThisEval.Contains(emp.EmployeeID)) continue;
+                        if (keptEmployeeIdsInTemplate.Contains(emp.EmployeeID)) continue;
+
+                        await conn.ExecuteAsync(@"
+                            IF NOT EXISTS (SELECT 1 FROM dbo.TemplateExcludedEmployees WHERE EvaluatorID = @EvalID AND EmployeeID = @EmpID)
+                                INSERT INTO dbo.TemplateExcludedEmployees (EvaluatorID, EmployeeID) VALUES (@EvalID, @EmpID);",
+                            new { EvalID = model.EvaluatorID, EmpID = emp.EmployeeID }, tx);
+                    }
                 }
 
                 await tx.CommitAsync();
@@ -1294,6 +1339,8 @@ namespace SchoolEvaluationERP.Services
                 .ToDictionary(g => g.Key, g => g.Select(x => x.CategoryID).ToHashSet());
             var sysExcluded = (await conn.QueryAsync<dynamic>("SELECT GroupID, EmployeeID FROM dbo.SystemTemplateExcludedEmployees"))
                 .Select(x => ((int)x.GroupID, (int)x.EmployeeID)).ToHashSet();
+            var tmplExcludedForExport = (await conn.QueryAsync<dynamic>("SELECT EvaluatorID, EmployeeID FROM dbo.TemplateExcludedEmployees"))
+                .Select(x => ((int)x.EvaluatorID, (int)x.EmployeeID)).ToHashSet();
 
             foreach (var eval in evaluators)
             {
@@ -1314,7 +1361,7 @@ namespace SchoolEvaluationERP.Services
                     assignsByEval.TryGetValue(eval.EvaluatorID, out var assignedSet);
                     assignedSet ??= new HashSet<int>();
                     matched = contEmps
-                        .Where(e => assignedSet.Contains(e.EmployeeID))
+                        .Where(e => assignedSet.Contains(e.EmployeeID) && !tmplExcludedForExport.Contains((eval.EvaluatorID, e.EmployeeID)))
                         .OrderBy(e => e.BranchName).ThenBy(e => e.CategoryID).ThenBy(e => e.EvaluationName)
                         .ToList();
                 }
@@ -1578,6 +1625,9 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
 
 
 

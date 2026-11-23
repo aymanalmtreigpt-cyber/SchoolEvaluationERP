@@ -95,7 +95,7 @@ namespace SchoolEvaluationERP.Models
             {
                 new() { ModuleCode = "MasterData", ModuleArabicName = "1. صفحة الأساسيات والهيكل التنظيمي", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
                 new() { ModuleCode = "IncentiveBasics", ModuleArabicName = "2. أساسيات الحوافز للفئات", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
-                new() { ModuleCode = "Templates", ModuleArabicName = "3. إنشاء وتجهيز قوالب التقييم (A4 / Excel)", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
+                new() { ModuleCode = "Templates", ModuleArabicName = "3. إنشاء وتجهيز قوالب التقييم (Excel)", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
                 new() { ModuleCode = "ScoreEntry", ModuleArabicName = "4. إدخال التقييمات الشهرية", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
                 new() { ModuleCode = "ScoreBalancing", ModuleArabicName = "5. نسب الموازنة للتقييمات", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
                 new() { ModuleCode = "HistoryLog", ModuleArabicName = "6. سجل التقييمات والأرشيف", CanRead = grantAll, CanInsert = grantAll, CanUpdate = grantAll, CanDelete = grantAll },
@@ -109,3 +109,4 @@ namespace SchoolEvaluationERP.Models
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 }
+

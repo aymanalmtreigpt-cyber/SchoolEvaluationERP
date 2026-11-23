@@ -209,20 +209,20 @@ namespace SchoolEvaluationERP.Models
         }
 
         /// <summary>
-        /// يُرجع الدرجة الفعلية من 100 التي تُحفظ في جدول الدرجات (سواء كانت درجة عادية أو ناتج تحويل أيام الغياب/التأخير).
+        /// يُرجع الدرجة الفعلية من 100 التي تُحفظ في جدول الدرجات (أو null إذا كانت الخلية فارغة لم تُدخل بعد).
         /// </summary>
-        public decimal GetEffectiveCriteriaScoreForSave(int index)
+        public decimal? GetEffectiveCriteriaScoreForSave(int index)
         {
-            if (index < 0 || index >= _scores.Length) return 0m;
+            if (index < 0 || index >= _scores.Length) return null;
             if (IsCountBasedMode)
             {
                 if (DirectCalculatedScoreOverride.HasValue)
                     return DirectCalculatedScoreOverride.Value;
                 if (!_scores[index].HasValue)
-                    return 0m;
+                    return null;
                 return CalculateGradualScoreFromCount(_scores[index]!.Value, MaxAllowedCount);
             }
-            return _scores[index] ?? 0;
+            return _scores[index].HasValue ? (decimal)_scores[index]!.Value : null;
         }
 
         public void SetScoreAt(int index, int? value)
@@ -373,9 +373,9 @@ namespace SchoolEvaluationERP.Models
             ? 0m
             : Math.Round((RawTotalOutOf100 / 100m) * EvaluatorWeight, 2, MidpointRounding.AwayFromZero);
 
-        public string RawCriteriaSumDisplay => IsCompletelyEmpty ? "—" : $"{RawCriteriaSumOutOf100:0.##} / 100";
-        public string RawTotalDisplay => IsCompletelyEmpty ? "—" : $"{RawTotalOutOf100:0.##} / 100";
-        public string WeightedScoreDisplay => IsCompletelyEmpty ? "—" : $"{WeightedScore:0.##} من {EvaluatorWeight:0.##}";
+        public string RawCriteriaSumDisplay => IsCompletelyEmpty ? "—" : (HasAnyEmptyCriteria ? $"{RawCriteriaSumOutOf100:0.##} (ناقص)" : $"{RawCriteriaSumOutOf100:0.##} / 100");
+        public string RawTotalDisplay => IsCompletelyEmpty ? "—" : (HasAnyEmptyCriteria ? $"{RawTotalOutOf100:0.##} (ناقص)" : $"{RawTotalOutOf100:0.##} / 100");
+        public string WeightedScoreDisplay => HasAnyEmptyCriteria ? "—" : $"{WeightedScore:0.##} من {EvaluatorWeight:0.##}";
 
         private void NotifyCalculatedFields()
         {
@@ -437,6 +437,7 @@ namespace SchoolEvaluationERP.Models
         public int EvalYear { get; set; }
         public int EvalMonth { get; set; }
         public int EvaluatedEmployeesCount { get; set; }
+        public decimal TotalRawScoreSum { get; set; }
         public decimal AverageRawScore { get; set; }
         public DateTime CreatedAt { get; set; }
         public string CreatedByFullName { get; set; } = string.Empty;
@@ -447,6 +448,9 @@ namespace SchoolEvaluationERP.Models
         public string EvaluatorWithGroupDisplay => string.IsNullOrWhiteSpace(GroupName) ? EvaluatorName : $"{EvaluatorName} ({GroupName})";
         public string DropdownRecordDisplay => $"{EvaluatorWithGroupDisplay} — [{EvaluatedEmployeesCount} موظف | المتوسط: {AverageRawScore:0.##}%]";
         public string VersionDisplay => $"v{VersionNumber}";
+        public string TotalScoreSumDisplay => EvaluatedEmployeesCount <= 0
+            ? "0"
+            : $"{TotalRawScoreSum:#,##0.##} / {(EvaluatedEmployeesCount * 100):#,##0}";
         public string AverageScoreDisplay => $"{AverageRawScore:0.##} %";
         public string CreatedAtDisplay => CreatedAt.ToString("yyyy-MM-dd hh:mm tt");
     }
@@ -502,6 +506,10 @@ namespace SchoolEvaluationERP.Models
         public bool HasAnyDifferences => NewlyAddedToTemplate.Count > 0 || RemovedFromTemplate.Count > 0;
     }
 }
+
+
+
+
 
 
 
