@@ -56,11 +56,59 @@ namespace SchoolEvaluationERP.Services
             return conn;
         }
 
-        public async Task<List<TemplateSummaryDto>> GetActiveTemplatesForEntryAsync(string search = "")
+        public async Task<List<TemplateSummaryDto>> GetActiveTemplatesForEntryAsync(
+            string search = "",
+            int? evalYear = null,
+            int? evalMonth = null)
         {
             using var conn = await OpenReadyConnectionAsync();
             var templateSvc = new TemplateService(_connectionString);
             await templateSvc.SyncAllSystemGroupTemplatesAsync(conn);
+            await TemplateService.EnsureMonthlyTemplatesSeededAsync(conn);
+
+            bool isAdmin = AuthService.CurrentSession?.IsAdmin == true;
+            int currentUserId = AuthService.CurrentSession?.UserID ?? 0;
+
+            var candidateEvaluators = (await conn.QueryAsync<int>(@"
+                SELECT DISTINCT t.EvaluatorID
+                FROM dbo.Templates t
+                INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0 AND ev.IsActive = 1
+                  AND (@Search = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
+                  AND (
+                        @IsAdmin = 1
+                        OR EXISTS (
+                            SELECT 1 FROM dbo.TemplateAssignedUsers tau
+                            WHERE tau.EvaluatorID = t.EvaluatorID AND tau.UserID = @CurrentUserID
+                        )
+                      )", new
+            {
+                Search = (search ?? string.Empty).Trim(),
+                Pattern = $"%{(search ?? string.Empty).Trim()}%",
+                IsAdmin = isAdmin ? 1 : 0,
+                CurrentUserID = currentUserId
+            })).ToList();
+
+            var resolvedTemplateIds = new List<int>();
+            if (evalYear.HasValue && evalMonth.HasValue)
+            {
+                foreach (int evId in candidateEvaluators)
+                {
+                    var res = await TemplateService.ResolveEffectiveTemplateIdForMonthAsync(conn, evId, evalYear.Value, evalMonth.Value);
+                    if (res.TemplateID > 0) resolvedTemplateIds.Add(res.TemplateID);
+                }
+            }
+            else if (candidateEvaluators.Count > 0)
+            {
+                resolvedTemplateIds = (await conn.QueryAsync<int>(@"
+                    SELECT TemplateID FROM dbo.Templates
+                    WHERE IsCurrentVersion = 1 AND IsDeleted = 0 AND EvaluatorID IN @EvalIDs",
+                    new { EvalIDs = candidateEvaluators })).ToList();
+            }
+
+            if (resolvedTemplateIds.Count == 0)
+                return new List<TemplateSummaryDto>();
 
             string sql = @"
                 SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, ISNULL(eg.GroupName, N'') AS GroupName,
@@ -74,22 +122,16 @@ namespace SchoolEvaluationERP.Services
                 FROM dbo.Templates t
                 INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
                 LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
-                WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0 AND ev.IsActive = 1
-                  AND (@Search = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
+                WHERE t.TemplateID IN @TemplateIDs
                 ORDER BY ISNULL(eg.IsSystemGroup, 0) DESC, ev.EvaluatorName ASC, t.TemplateID DESC";
 
-            var list = (await conn.QueryAsync<TemplateSummaryDto>(sql, new
-            {
-                Search = (search ?? string.Empty).Trim(),
-                Pattern = $"%{(search ?? string.Empty).Trim()}%"
-            })).ToList();
+            var list = (await conn.QueryAsync<TemplateSummaryDto>(sql, new { TemplateIDs = resolvedTemplateIds })).ToList();
 
             var sheets = await conn.QueryAsync<dynamic>(@"
                 SELECT ts.TemplateID, ts.SheetName, ts.TargetCategoryName
                 FROM dbo.TemplateSheets ts
-                INNER JOIN dbo.Templates t ON ts.TemplateID = t.TemplateID
-                WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0
-                ORDER BY ts.SortOrder ASC");
+                WHERE ts.TemplateID IN @TemplateIDs
+                ORDER BY ts.SortOrder ASC", new { TemplateIDs = resolvedTemplateIds });
 
             var sheetsGroup = sheets.GroupBy(x => (int)x.TemplateID)
                                     .ToDictionary(g => g.Key, g => string.Join(" | ", g.Select(s => $"{s.SheetName} ({s.TargetCategoryName})")));
@@ -157,6 +199,19 @@ namespace SchoolEvaluationERP.Services
         public async Task<WeeklyEvaluationWorkspaceModel?> PrepareNewWorkspaceAsync(int templateId, int year, int month)
         {
             using var conn = await OpenReadyConnectionAsync();
+            int? baseEvaluatorId = await conn.ExecuteScalarAsync<int?>(
+                "SELECT EvaluatorID FROM dbo.Templates WHERE TemplateID = @ID",
+                new { ID = templateId });
+
+            int effectiveTemplateId = templateId;
+            if (baseEvaluatorId.HasValue && baseEvaluatorId.Value > 0)
+            {
+                var monthRes = await TemplateService.ResolveEffectiveTemplateIdForMonthAsync(conn, baseEvaluatorId.Value, year, month);
+                if (monthRes.TemplateID > 0)
+                    effectiveTemplateId = monthRes.TemplateID;
+            }
+            templateId = effectiveTemplateId;
+
             var header = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
                 SELECT t.TemplateID, t.VersionNumber, t.EvaluatorID, ev.EvaluatorName, ev.GroupID,
                        ISNULL(eg.GroupName, N'') AS GroupName,
@@ -173,15 +228,24 @@ namespace SchoolEvaluationERP.Services
             bool isCountBased = Convert.ToBoolean(header.IsSystemGroup);
             int groupId = (int)header.GroupID;
             int evaluatorId = (int)header.EvaluatorID;
+            if (!await TemplateService.CanCurrentUserAccessEvaluatorAsync(conn, evaluatorId))
+                return null;
+
             string sysCode = (header.SystemGroupCode as string) ?? string.Empty;
             int maxAllowed = Convert.ToInt32(header.MaxAllowedCount);
             if (maxAllowed < 0) maxAllowed = 0;
 
             var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
 
-            if (!isCountBased)
+            if (!isCountBased && !isLocked)
             {
-                await TemplateService.EnsureMissingCategorySheetsForTemplateAsync(conn, templateId, evaluatorId, year, month);
+                int linkedEvals = await conn.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(1) FROM dbo.EvaluationRecords WHERE TemplateID = @TID",
+                    new { TID = templateId });
+                if (linkedEvals == 0)
+                {
+                    await TemplateService.EnsureMissingCategorySheetsForTemplateAsync(conn, templateId, evaluatorId, year, month);
+                }
             }
 
             var workspace = new WeeklyEvaluationWorkspaceModel
@@ -444,7 +508,7 @@ namespace SchoolEvaluationERP.Services
             public bool IsEmployeeStillActive { get; set; }
         }
 
-        public async Task<WeeklyEvaluationWorkspaceModel?> LoadSavedRecordWorkspaceAsync(int recordId)
+        public async Task<WeeklyEvaluationWorkspaceModel?> LoadSavedRecordWorkspaceAsync(int recordId, bool enforceAssignedUserScope = false)
         {
             using var conn = await OpenReadyConnectionAsync();
             var rec = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
@@ -470,6 +534,9 @@ namespace SchoolEvaluationERP.Services
                 WHERE er.RecordID = @ID", new { ID = recordId });
 
             if (rec == null) return null;
+
+            if (enforceAssignedUserScope && !await TemplateService.CanCurrentUserAccessEvaluatorAsync(conn, (int)rec.EvaluatorID))
+                return null;
 
             bool isTemplateStillActive = Convert.ToInt32(rec.IsTemplateStillActive) == 1;
             bool isSystemGrp = Convert.ToBoolean(rec.IsSystemGroup);
@@ -782,6 +849,12 @@ namespace SchoolEvaluationERP.Services
 
             using var conn = await OpenReadyConnectionAsync();
 
+            if (string.Equals(permissionModuleCode, "ScoreEntry", StringComparison.OrdinalIgnoreCase)
+                && !await TemplateService.CanCurrentUserAccessEvaluatorAsync(conn, workspace.EvaluatorID))
+            {
+                return (false, "عذراً، لا تملك صلاحية إدخال أو تعديل درجات هذا القالب لأنه غير مسند لحسابك.", 0);
+            }
+
             var (isMonthLocked, lockedByUser, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, workspace.EvalYear, workspace.EvalMonth);
             if (isMonthLocked)
             {
@@ -967,6 +1040,17 @@ namespace SchoolEvaluationERP.Services
                         new { RecordID = targetRecordId }, tx);
                 }
 
+                await conn.ExecuteAsync(@"
+                    IF NOT EXISTS (
+                        SELECT 1 FROM dbo.MonthlyEvaluatorTemplates
+                        WHERE EvalYear = @Y AND EvalMonth = @M AND EvaluatorID = @EvalID
+                    )
+                    BEGIN
+                        INSERT INTO dbo.MonthlyEvaluatorTemplates (EvalYear, EvalMonth, EvaluatorID, TemplateID, UpdatedAt)
+                        VALUES (@Y, @M, @EvalID, @TID, SYSDATETIME());
+                    END",
+                    new { Y = workspace.EvalYear, M = workspace.EvalMonth, EvalID = workspace.EvaluatorID, TID = workspace.TemplateID }, tx);
+
                 await tx.CommitAsync();
 
                 string arMonth = IncentiveCalculatorService.GetArabicMonthName(workspace.EvalMonth);
@@ -996,7 +1080,8 @@ namespace SchoolEvaluationERP.Services
         public async Task<List<EvaluationRecordSummaryDto>> GetEvaluationHistoryLogsAsync(
             string evaluatorSearch = "",
             int? filterYear = null,
-            int? filterMonth = null)
+            int? filterMonth = null,
+            bool restrictToAssignedUser = false)
         {
             using var conn = await OpenReadyConnectionAsync();
             string sql = @"
@@ -1065,14 +1150,26 @@ namespace SchoolEvaluationERP.Services
                       )
                   AND (@Year IS NULL OR er.EvalYear = @Year)
                   AND (@Month IS NULL OR er.EvalMonth = @Month)
+                  AND (
+                        @BypassScope = 1
+                        OR EXISTS (
+                            SELECT 1 FROM dbo.TemplateAssignedUsers tau
+                            WHERE tau.EvaluatorID = er.EvaluatorID AND tau.UserID = @CurrentUserID
+                        )
+                      )
                 ORDER BY er.EvalYear DESC, er.EvalMonth DESC, er.CreatedAt DESC";
+
+            bool bypassScope = !restrictToAssignedUser || AuthService.CurrentSession?.IsAdmin == true;
+            int currentUserId = AuthService.CurrentSession?.UserID ?? 0;
 
             var list = await conn.QueryAsync<EvaluationRecordSummaryDto>(sql, new
             {
                 Search = (evaluatorSearch ?? string.Empty).Trim(),
                 Pattern = $"%{(evaluatorSearch ?? string.Empty).Trim()}%",
                 Year = filterYear,
-                Month = filterMonth
+                Month = filterMonth,
+                BypassScope = bypassScope ? 1 : 0,
+                CurrentUserID = currentUserId
             });
 
             return list.ToList();
@@ -1255,6 +1352,9 @@ namespace SchoolEvaluationERP.Services
             string filePath,
             int targetYear)
         {
+            if (AuthService.CurrentSession?.IsAdmin != true)
+                return (false, "عذراً، ميزة سحب التقييمات المجمعة لجميع المقيمين مخصصة لمدير النظام فقط.");
+
             if (!CheckPermission("ScoreEntry", "insert", out string permErr) &&
                 !CheckPermission("ScoreEntry", "update", out permErr))
             {
@@ -1584,6 +1684,18 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

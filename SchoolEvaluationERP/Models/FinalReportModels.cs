@@ -60,10 +60,13 @@ namespace SchoolEvaluationERP.Models
         public List<EmployeeMonthlyReportRowDto> Rows { get; set; } = new();
 
         public int TotalEmployeesCount => Rows.Count;
-        public int DeservingEmployeesCount => Rows.FindAll(r => r.FinalIncentiveAmount > 0m).Count;
+        public int DeservingEmployeesCount => Rows.Any(r => r.FinalIncentiveAmount > 0m)
+            ? Rows.Count(r => r.HasIncentive && r.MonthlyEvaluationAverage > 80m && r.FinalIncentiveAmount > 0m)
+            : Rows.Count(r => r.HasIncentive && r.MonthlyEvaluationAverage >= 81m);
         public decimal TotalIncentivePayout => Rows.Count == 0 ? 0m : Rows.Sum(r => r.FinalIncentiveAmount);
         public decimal OverallAverageScore => Rows.Count == 0 ? 0m : Math.Round(Rows.Average(r => r.MonthlyEvaluationAverage), 2, MidpointRounding.AwayFromZero);
     }
 }
+
 
 

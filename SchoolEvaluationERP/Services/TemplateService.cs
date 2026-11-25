@@ -260,6 +260,52 @@ namespace SchoolEvaluationERP.Services
             return model.Sheets.Count > 0 ? model : null;
         }
 
+        public const string ExcelTemplatePasswordSettingKey = "ExcelTemplateProtectionPassword";
+        public const string DefaultExcelProtectionPassword = "SchoolEval@2026#Protect";
+
+        public async Task<string> GetSavedExcelProtectionPasswordRawAsync()
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+
+            string? saved = await conn.ExecuteScalarAsync<string?>(
+                "SELECT SettingValue FROM dbo.SystemSettings WHERE SettingKey = @Key",
+                new { Key = ExcelTemplatePasswordSettingKey });
+
+            return saved ?? string.Empty;
+        }
+
+        public async Task<string> GetEffectiveExcelProtectionPasswordAsync()
+        {
+            string saved = await GetSavedExcelProtectionPasswordRawAsync();
+            return string.IsNullOrWhiteSpace(saved) ? DefaultExcelProtectionPassword : saved.Trim();
+        }
+
+        public async Task<(bool IsSuccess, string Message)> SaveExcelProtectionPasswordAsync(string? password)
+        {
+            if (AuthService.CurrentSession == null)
+                return (false, "انتهت جلسة العمل، يرجى إعادة تسجيل الدخول.");
+
+            if (!AuthService.CurrentSession.IsAdmin)
+                return (false, "عذراً، تعديل كلمة سر قوالب الإكسل مخصص لمدير النظام فقط.");
+
+            string cleanPwd = (password ?? string.Empty).Trim();
+
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+
+            await conn.ExecuteAsync(@"
+                IF EXISTS (SELECT 1 FROM dbo.SystemSettings WHERE SettingKey = @Key)
+                    UPDATE dbo.SystemSettings SET SettingValue = @Val, UpdatedAt = SYSDATETIME() WHERE SettingKey = @Key;
+                ELSE
+                    INSERT INTO dbo.SystemSettings (SettingKey, SettingValue, UpdatedAt) VALUES (@Key, @Val, SYSDATETIME());",
+                new { Key = ExcelTemplatePasswordSettingKey, Val = cleanPwd });
+
+            return (true, string.IsNullOrEmpty(cleanPwd)
+                ? "تم مسح كلمة السر المخصصة — سيتم استخدام كلمة السر الافتراضية الداخلية لحماية قوالب الإكسل تلقائياً."
+                : "✔ تم حفظ كلمة سر حماية قوالب الإكسل بنجاح؛ سيتم حماية جميع قوالب الإكسل المستخرجة بها.");
+        }
+
         public async Task<bool> HasAnyActiveCategoriesAsync()
         {
             using var conn = new SqlConnection(_connectionString);
@@ -511,6 +557,258 @@ namespace SchoolEvaluationERP.Services
             }).ToList();
         }
 
+        public static async Task<bool> CanCurrentUserAccessEvaluatorAsync(SqlConnection conn, int evaluatorId)
+        {
+            var session = AuthService.CurrentSession;
+            if (session == null) return false;
+            if (session.IsAdmin) return true;
+
+            int cnt = await conn.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(1)
+                FROM dbo.TemplateAssignedUsers
+                WHERE EvaluatorID = @EvalID AND UserID = @UserID",
+                new { EvalID = evaluatorId, UserID = session.UserID });
+
+            return cnt > 0;
+        }
+
+        public async Task<List<TemplateAssignedUserDto>> GetActiveAssignableUsersAsync()
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+
+            var list = await conn.QueryAsync<TemplateAssignedUserDto>(@"
+                SELECT UserID, Username, FullName, IsAdmin, IsActive
+                FROM dbo.Users
+                WHERE IsActive = 1 AND IsAdmin = 0
+                ORDER BY FullName ASC, Username ASC");
+
+            return list.ToList();
+        }
+
+        public async Task<List<TemplateAssignedUserDto>> GetAssignedUsersForEvaluatorAsync(int evaluatorId)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+
+            var list = await conn.QueryAsync<TemplateAssignedUserDto>(@"
+                SELECT u.UserID, u.Username, u.FullName, u.IsAdmin, u.IsActive
+                FROM dbo.TemplateAssignedUsers tau
+                INNER JOIN dbo.Users u ON tau.UserID = u.UserID
+                WHERE tau.EvaluatorID = @EvalID
+                ORDER BY u.IsActive DESC, u.FullName ASC",
+                new { EvalID = evaluatorId });
+
+            return list.ToList();
+        }
+
+        public async Task<(bool IsSuccess, string Message)> SaveTemplateAssignedUsersAsync(int evaluatorId, List<int> userIds)
+        {
+            if (AuthService.CurrentSession == null)
+                return (false, "انتهت جلسة العمل، يرجى إعادة تسجيل الدخول.");
+
+            if (!AuthService.CurrentSession.IsAdmin)
+                return (false, "عذراً، تحديد المستخدمين المسؤولين عن القوالب مخصص لمدير النظام فقط.");
+
+            if (evaluatorId <= 0)
+                return (false, "معرف المقيم غير صالح.");
+
+            var distinctIds = (userIds ?? new List<int>()).Where(id => id > 0).Distinct().ToList();
+
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+            if (conn.State != ConnectionState.Open)
+                await conn.OpenAsync();
+
+            using var tx = conn.BeginTransaction();
+            try
+            {
+                await conn.ExecuteAsync(
+                    "DELETE FROM dbo.TemplateAssignedUsers WHERE EvaluatorID = @EvalID",
+                    new { EvalID = evaluatorId }, tx);
+
+                foreach (int uid in distinctIds)
+                {
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO dbo.TemplateAssignedUsers (EvaluatorID, UserID, AssignedAt)
+                        VALUES (@EvalID, @UserID, SYSDATETIME())",
+                        new { EvalID = evaluatorId, UserID = uid }, tx);
+                }
+
+                await tx.CommitAsync();
+                return (true, distinctIds.Count == 0
+                    ? "تم إلغاء إسناد القالب من جميع المستخدمين العاديين (يظهر لحساب المدير فقط)."
+                    : $"تم حفظ ({distinctIds.Count}) مستخدم مسؤول عن القالب بنجاح.");
+            }
+            catch (Exception ex)
+            {
+                await tx.RollbackAsync();
+                return (false, $"تعذر حفظ المستخدمين المسؤولين عن القالب: {ex.Message}");
+            }
+        }
+
+        public static async Task EnsureMonthlyTemplatesSeededAsync(SqlConnection conn, SqlTransaction? tx = null)
+        {
+            await conn.ExecuteAsync(@"
+                INSERT INTO dbo.MonthlyEvaluatorTemplates (EvalYear, EvalMonth, EvaluatorID, TemplateID, UpdatedAt)
+                SELECT src.EvalYear, src.EvalMonth, src.EvaluatorID, src.TemplateID, SYSDATETIME()
+                FROM (
+                    SELECT er.EvalYear, er.EvalMonth, er.EvaluatorID, er.TemplateID,
+                           ROW_NUMBER() OVER (PARTITION BY er.EvalYear, er.EvalMonth, er.EvaluatorID ORDER BY er.RecordID DESC) AS rn
+                    FROM dbo.EvaluationRecords er
+                    INNER JOIN dbo.Templates t ON er.TemplateID = t.TemplateID
+                    WHERE t.IsDeleted = 0
+                ) src
+                WHERE src.rn = 1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM dbo.MonthlyEvaluatorTemplates met
+                      WHERE met.EvalYear = src.EvalYear
+                        AND met.EvalMonth = src.EvalMonth
+                        AND met.EvaluatorID = src.EvaluatorID
+                  );", transaction: tx);
+
+            var activeCurrents = (await conn.QueryAsync<dynamic>(@"
+                SELECT t.EvaluatorID, t.TemplateID
+                FROM dbo.Templates t
+                INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0 AND ISNULL(eg.IsSystemGroup, 0) = 0", transaction: tx)).ToList();
+
+            foreach (var cur in activeCurrents)
+            {
+                int evalId = (int)cur.EvaluatorID;
+                int curTid = (int)cur.TemplateID;
+
+                var latestMapped = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                    SELECT TOP 1 EvalYear, EvalMonth, TemplateID
+                    FROM dbo.MonthlyEvaluatorTemplates
+                    WHERE EvaluatorID = @EvalID
+                    ORDER BY (EvalYear * 100 + EvalMonth) DESC",
+                    new { EvalID = evalId }, tx);
+
+                if (latestMapped != null && (int)latestMapped.TemplateID != curTid)
+                {
+                    var nextMonthDate = new DateTime((int)latestMapped.EvalYear, (int)latestMapped.EvalMonth, 1).AddMonths(1);
+                    await conn.ExecuteAsync(@"
+                        IF NOT EXISTS (
+                            SELECT 1 FROM dbo.MonthlyEvaluatorTemplates
+                            WHERE EvalYear = @Y AND EvalMonth = @M AND EvaluatorID = @EvalID
+                        )
+                        BEGIN
+                            INSERT INTO dbo.MonthlyEvaluatorTemplates (EvalYear, EvalMonth, EvaluatorID, TemplateID, UpdatedAt)
+                            VALUES (@Y, @M, @EvalID, @TID, SYSDATETIME());
+                        END",
+                        new { Y = nextMonthDate.Year, M = nextMonthDate.Month, EvalID = evalId, TID = curTid }, tx);
+                }
+            }
+        }
+
+        public static async Task<(int TemplateID, int? EffYear, int? EffMonth, bool IsOwnMonthVersion)> ResolveEffectiveTemplateIdForMonthAsync(
+            SqlConnection conn,
+            int evaluatorId,
+            int year,
+            int month,
+            SqlTransaction? tx = null)
+        {
+            await EnsureMonthlyTemplatesSeededAsync(conn, tx);
+            int reqKey = year * 100 + month;
+
+            var matched = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT TOP 1 met.TemplateID, met.EvalYear, met.EvalMonth
+                FROM dbo.MonthlyEvaluatorTemplates met
+                INNER JOIN dbo.Templates t ON met.TemplateID = t.TemplateID
+                WHERE met.EvaluatorID = @EvalID
+                  AND t.IsDeleted = 0
+                  AND (met.EvalYear * 100 + met.EvalMonth) <= @ReqKey
+                ORDER BY (met.EvalYear * 100 + met.EvalMonth) DESC",
+                new { EvalID = evaluatorId, ReqKey = reqKey }, tx);
+
+            if (matched != null)
+            {
+                int ey = (int)matched.EvalYear;
+                int em = (int)matched.EvalMonth;
+                return ((int)matched.TemplateID, ey, em, ey == year && em == month);
+            }
+
+            var earliest = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT TOP 1 met.TemplateID, met.EvalYear, met.EvalMonth
+                FROM dbo.MonthlyEvaluatorTemplates met
+                INNER JOIN dbo.Templates t ON met.TemplateID = t.TemplateID
+                WHERE met.EvaluatorID = @EvalID
+                  AND t.IsDeleted = 0
+                ORDER BY (met.EvalYear * 100 + met.EvalMonth) ASC",
+                new { EvalID = evaluatorId }, tx);
+
+            if (earliest != null)
+            {
+                return ((int)earliest.TemplateID, (int)earliest.EvalYear, (int)earliest.EvalMonth, false);
+            }
+
+            int? fallbackId = await conn.ExecuteScalarAsync<int?>(@"
+                SELECT TOP 1 TemplateID
+                FROM dbo.Templates
+                WHERE EvaluatorID = @EvalID AND IsCurrentVersion = 1 AND IsDeleted = 0
+                ORDER BY TemplateID DESC",
+                new { EvalID = evaluatorId }, tx);
+
+            return (fallbackId ?? 0, null, null, false);
+        }
+
+        public async Task<(bool IsMonthLocked, string LockedBy, string StatusBadgeText)> GetTemplatesPeriodStatusAsync(int year, int month)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+            await EnsureMonthlyTemplatesSeededAsync(conn);
+
+            string reqName = $"{IncentiveCalculatorService.GetArabicMonthName(month)} {year} م";
+            var (isLocked, lockedBy, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
+            if (isLocked)
+            {
+                return (true, lockedBy, $"🔒 شهر ({reqName}) معتمد ومغلق نهائياً بواسطة ({lockedBy}) — قوالب هذا الشهر محفوظة للقراءة فقط");
+            }
+
+            int reqKey = year * 100 + month;
+            int ownCount = await conn.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(1)
+                FROM dbo.MonthlyEvaluatorTemplates met
+                INNER JOIN dbo.Templates t ON met.TemplateID = t.TemplateID
+                INNER JOIN dbo.Evaluators ev ON met.EvaluatorID = ev.EvaluatorID
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE met.EvalYear = @Y AND met.EvalMonth = @M AND t.IsDeleted = 0 AND ISNULL(eg.IsSystemGroup, 0) = 0",
+                new { Y = year, M = month });
+
+            var latestPrior = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
+                SELECT TOP 1 met.EvalYear, met.EvalMonth
+                FROM dbo.MonthlyEvaluatorTemplates met
+                INNER JOIN dbo.Templates t ON met.TemplateID = t.TemplateID
+                INNER JOIN dbo.Evaluators ev ON met.EvaluatorID = ev.EvaluatorID
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE (met.EvalYear * 100 + met.EvalMonth) < @ReqKey AND t.IsDeleted = 0 AND ISNULL(eg.IsSystemGroup, 0) = 0
+                ORDER BY (met.EvalYear * 100 + met.EvalMonth) DESC",
+                new { ReqKey = reqKey });
+
+            if (ownCount > 0)
+            {
+                return (false, string.Empty, $"✔ توجد نسخ قوالب مستقلة محفوظة لشهر ({reqName}) ({ownCount} قالب) — وأي تعديل سيُحفظ لهذا الشهر دون المساس بالأشهر السابقة أو اللاحقة المعتمدة");
+            }
+
+            if (latestPrior != null)
+            {
+                string effName = $"{IncentiveCalculatorService.GetArabicMonthName((int)latestPrior.EvalMonth)} {(int)latestPrior.EvalYear} م";
+                return (false, string.Empty, $"🔗 قوالب شهر ({reqName}) ترث تلقائياً من ({effName}) — أي تعديل سيحفظ نسخة مستقلة لشهر ({reqName})");
+            }
+
+            return (false, string.Empty, $"⚙ قوالب شهر ({reqName}) — التهيئة الافتراضية");
+        }
+
+        public async Task<int> ResolveTemplateIdForEvaluatorInMonthAsync(int evaluatorId, int year, int month)
+        {
+            using var conn = new SqlConnection(_connectionString);
+            await EnsureSchemaUpToDateAsync(conn);
+            var res = await ResolveEffectiveTemplateIdForMonthAsync(conn, evaluatorId, year, month);
+            return res.TemplateID;
+        }
+
         public async Task<List<TemplateSummaryDto>> GetCurrentTemplatesAsync(
             string evaluatorSearch = "",
             bool syncSystemTemplates = true,
@@ -524,25 +822,67 @@ namespace SchoolEvaluationERP.Services
                 await SyncAllSystemGroupTemplatesAsync(conn);
             }
 
+            await EnsureMonthlyTemplatesSeededAsync(conn);
+
             var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+            var (isMonthLocked, _, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
 
-            if (syncSystemTemplates && string.IsNullOrWhiteSpace(evaluatorSearch))
+            bool isAdmin = AuthService.CurrentSession?.IsAdmin == true;
+            int currentUserId = AuthService.CurrentSession?.UserID ?? 0;
+
+            var candidateEvaluators = (await conn.QueryAsync<dynamic>(@"
+                SELECT DISTINCT t.EvaluatorID, ev.EvaluatorName, ISNULL(eg.GroupName, N'') AS GroupName,
+                       ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
+                FROM dbo.Templates t
+                INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
+                LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
+                WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0
+                  AND (@Search = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
+                  AND (
+                        @IsAdmin = 1
+                        OR EXISTS (
+                            SELECT 1 FROM dbo.TemplateAssignedUsers tau
+                            WHERE tau.EvaluatorID = t.EvaluatorID AND tau.UserID = @CurrentUserID
+                        )
+                      )
+                ORDER BY ISNULL(eg.IsSystemGroup, 0) DESC, ev.EvaluatorName ASC", new
             {
-                var activeNormalTemplates = (await conn.QueryAsync<dynamic>(@"
-                    SELECT t.TemplateID, t.EvaluatorID
-                    FROM dbo.Templates t
-                    INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
-                    LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
-                    WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0 AND ISNULL(eg.IsSystemGroup, 0) = 0")).ToList();
+                Search = (evaluatorSearch ?? string.Empty).Trim(),
+                Pattern = $"%{(evaluatorSearch ?? string.Empty).Trim()}%",
+                IsAdmin = isAdmin ? 1 : 0,
+                CurrentUserID = currentUserId
+            })).ToList();
 
-                foreach (var nt in activeNormalTemplates)
+            var resolvedByEval = new Dictionary<int, (int TemplateID, int? EffYear, int? EffMonth, bool IsOwn)>();
+            var resolvedTemplateIds = new List<int>();
+
+            foreach (var ce in candidateEvaluators)
+            {
+                int evId = (int)ce.EvaluatorID;
+                bool isSys = Convert.ToBoolean(ce.IsSystemGroup);
+                var res = await ResolveEffectiveTemplateIdForMonthAsync(conn, evId, year, month);
+                if (res.TemplateID <= 0) continue;
+
+                resolvedByEval[evId] = (res.TemplateID, res.EffYear, res.EffMonth, res.IsOwnMonthVersion);
+                resolvedTemplateIds.Add(res.TemplateID);
+
+                if (syncSystemTemplates && string.IsNullOrWhiteSpace(evaluatorSearch) && !isSys && !isMonthLocked)
                 {
-                    await EnsureMissingCategorySheetsForTemplateAsync(conn, (int)nt.TemplateID, (int)nt.EvaluatorID, year, month);
+                    int linkedEvals = await conn.ExecuteScalarAsync<int>(
+                        "SELECT COUNT(1) FROM dbo.EvaluationRecords WHERE TemplateID = @TID",
+                        new { TID = res.TemplateID });
+                    if (linkedEvals == 0)
+                    {
+                        await EnsureMissingCategorySheetsForTemplateAsync(conn, res.TemplateID, evId, year, month);
+                    }
                 }
             }
 
+            if (resolvedTemplateIds.Count == 0)
+                return new List<TemplateSummaryDto>();
+
             string sql = @"
-                SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, eg.GroupName,
+                SELECT t.TemplateID, t.TemplateGroupGuid, t.EvaluatorID, ev.EvaluatorName, ISNULL(eg.GroupName, N'') AS GroupName,
                        t.VersionNumber, t.CreatedAt,
                        (SELECT COUNT(1) FROM dbo.TemplateSheets ts WHERE ts.TemplateID = t.TemplateID) AS SheetsCount,
                        0 AS TotalEmployeesCount,
@@ -550,22 +890,35 @@ namespace SchoolEvaluationERP.Services
                 FROM dbo.Templates t
                 INNER JOIN dbo.Evaluators ev ON t.EvaluatorID = ev.EvaluatorID
                 LEFT JOIN dbo.EvaluatorGroups eg ON ev.GroupID = eg.GroupID
-                WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0
-                  AND (@Search = '' OR ev.EvaluatorName LIKE @Pattern OR eg.GroupName LIKE @Pattern)
+                WHERE t.TemplateID IN @TemplateIDs
                 ORDER BY ISNULL(eg.IsSystemGroup, 0) DESC, t.CreatedAt DESC";
 
-            var list = (await conn.QueryAsync<TemplateSummaryDto>(sql, new
-            {
-                Search = (evaluatorSearch ?? string.Empty).Trim(),
-                Pattern = $"%{(evaluatorSearch ?? string.Empty).Trim()}%"
-            })).ToList();
+            var list = (await conn.QueryAsync<TemplateSummaryDto>(sql, new { TemplateIDs = resolvedTemplateIds })).ToList();
+
+            var assignedUsersRows = (await conn.QueryAsync<dynamic>(@"
+                SELECT tau.EvaluatorID, u.UserID, u.Username, u.FullName, u.IsAdmin, u.IsActive
+                FROM dbo.TemplateAssignedUsers tau
+                INNER JOIN dbo.Users u ON tau.UserID = u.UserID
+                ORDER BY u.IsActive DESC, u.FullName ASC")).ToList();
+
+            var assignedUsersByEval = assignedUsersRows
+                .GroupBy(x => (int)x.EvaluatorID)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(x => new TemplateAssignedUserDto
+                    {
+                        UserID = (int)x.UserID,
+                        Username = (string)x.Username,
+                        FullName = (string)x.FullName,
+                        IsAdmin = Convert.ToBoolean(x.IsAdmin),
+                        IsActive = Convert.ToBoolean(x.IsActive)
+                    }).ToList());
 
             var sheets = (await conn.QueryAsync<dynamic>(@"
                 SELECT ts.TemplateID, ts.SheetID, ts.SheetName, ts.TargetCategoryID, ts.TargetBranchID, ts.TargetCategoryName
                 FROM dbo.TemplateSheets ts
-                INNER JOIN dbo.Templates t ON ts.TemplateID = t.TemplateID
-                WHERE t.IsCurrentVersion = 1 AND t.IsDeleted = 0
-                ORDER BY ts.SortOrder ASC")).ToList();
+                WHERE ts.TemplateID IN @TemplateIDs
+                ORDER BY ts.SortOrder ASC", new { TemplateIDs = resolvedTemplateIds })).ToList();
 
             var evalGroupLookup = (await conn.QueryAsync<dynamic>(@"
                 SELECT ev.EvaluatorID, ev.GroupID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
@@ -594,6 +947,21 @@ namespace SchoolEvaluationERP.Services
 
             foreach (var item in list)
             {
+                if (assignedUsersByEval.TryGetValue(item.EvaluatorID, out var evalAssignedUsers))
+                {
+                    item.AssignedUsers = evalAssignedUsers;
+                }
+
+                item.RequestedYear = year;
+                item.RequestedMonth = month;
+                item.IsPeriodMonthLocked = isMonthLocked;
+                if (resolvedByEval.TryGetValue(item.EvaluatorID, out var mRes))
+                {
+                    item.EffectiveTemplateYear = mRes.EffYear;
+                    item.EffectiveTemplateMonth = mRes.EffMonth;
+                    item.IsOwnMonthVersion = mRes.IsOwn;
+                }
+
                 sheetsByTemplate.TryGetValue(item.TemplateID, out var tSheets);
                 tSheets ??= new List<dynamic>();
 
@@ -658,9 +1026,22 @@ namespace SchoolEvaluationERP.Services
             int groupId = (int)header.GroupID;
             int evaluatorId = (int)header.EvaluatorID;
 
-            if (!isSys)
+            if (!await CanCurrentUserAccessEvaluatorAsync(conn, evaluatorId))
+                return null;
+
+            await EnsureMonthlyTemplatesSeededAsync(conn);
+            var (isMonthLocked, lockedByUser, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, year, month);
+            var monthRes = await ResolveEffectiveTemplateIdForMonthAsync(conn, evaluatorId, year, month);
+
+            if (!isSys && !isMonthLocked)
             {
-                await EnsureMissingCategorySheetsForTemplateAsync(conn, templateId, evaluatorId, year, month);
+                int linkedEvals = await conn.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(1) FROM dbo.EvaluationRecords WHERE TemplateID = @TID",
+                    new { TID = templateId });
+                if (linkedEvals == 0)
+                {
+                    await EnsureMissingCategorySheetsForTemplateAsync(conn, templateId, evaluatorId, year, month);
+                }
             }
 
             var model = new TemplateFullModel
@@ -674,7 +1055,14 @@ namespace SchoolEvaluationERP.Services
                 CreatedAt = header.CreatedAt,
                 IsSystemTemplate = isSys,
                 SystemGroupCode = (header.SystemGroupCode as string) ?? string.Empty,
-                MaxAllowedCount = (int)header.MaxAllowedCount
+                MaxAllowedCount = (int)header.MaxAllowedCount,
+                RequestedYear = year,
+                RequestedMonth = month,
+                EffectiveTemplateYear = monthRes.EffYear,
+                EffectiveTemplateMonth = monthRes.EffMonth,
+                IsOwnMonthVersion = monthRes.IsOwnMonthVersion && monthRes.TemplateID == templateId,
+                IsMonthLocked = isMonthLocked,
+                LockedByUserName = lockedByUser
             };
 
             var sheets = (await conn.QueryAsync<TemplateSheetModel>(@"
@@ -834,6 +1222,9 @@ namespace SchoolEvaluationERP.Services
         public async Task<(bool IsSuccess, string Message, int SavedTemplateId)> SaveTemplateAsync(TemplateFullModel model, int? evalYear = null, int? evalMonth = null)
         {
             bool isNew = model.TemplateID == 0;
+            if (isNew && AuthService.CurrentSession?.IsAdmin != true)
+                return (false, "عذراً، إنشاء قوالب التقييم الجديدة مخصص لمدير النظام فقط.", 0);
+
             if (!CheckPermission(isNew ? "insert" : "update", out string permErr))
                 return (false, permErr, 0);
 
@@ -884,6 +1275,18 @@ namespace SchoolEvaluationERP.Services
                 await conn.OpenAsync();
             }
 
+            if (!isNew && !await CanCurrentUserAccessEvaluatorAsync(conn, model.EvaluatorID))
+                return (false, "عذراً، لا تملك صلاحية تعديل هذا القالب لأنه غير مسند لحسابك.", 0);
+
+            await EnsureMonthlyTemplatesSeededAsync(conn);
+            var (saveYear, saveMonth) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
+            var (isMonthLocked, lockedByUser, _) = await MonthlyPeriodConfigService.GetMonthLockStatusAsync(conn, saveYear, saveMonth);
+            if (isMonthLocked)
+            {
+                string lockName = $"{IncentiveCalculatorService.GetArabicMonthName(saveMonth)} {saveYear} م";
+                return (false, $"لا يمكن تعديل قالب شهر ({lockName}) لأنه معتمد ومغلق نهائياً بواسطة ({lockedByUser}).", 0);
+            }
+
             var evalGroupInfo = await conn.QueryFirstOrDefaultAsync<dynamic>(@"
                 SELECT ev.GroupID, ISNULL(eg.IsSystemGroup, 0) AS IsSystemGroup
                 FROM dbo.Evaluators ev
@@ -900,6 +1303,8 @@ namespace SchoolEvaluationERP.Services
                 int targetTemplateId = model.TemplateID;
                 int newVersionNumber = model.VersionNumber;
                 bool createdNewVersion = false;
+                bool savedForPastMonthOnly = false;
+                int savePeriodKey = saveYear * 100 + saveMonth;
 
                 if (isSystemGroup)
                 {
@@ -958,28 +1363,79 @@ namespace SchoolEvaluationERP.Services
                         EvalID = model.EvaluatorID,
                         UserID = AuthService.CurrentSession?.UserID
                     }, tx);
+
+                    await conn.ExecuteAsync(@"
+                        IF EXISTS (SELECT 1 FROM dbo.MonthlyEvaluatorTemplates WHERE EvalYear = @Y AND EvalMonth = @M AND EvaluatorID = @EvalID)
+                            UPDATE dbo.MonthlyEvaluatorTemplates SET TemplateID = @TID, UpdatedAt = SYSDATETIME() WHERE EvalYear = @Y AND EvalMonth = @M AND EvaluatorID = @EvalID;
+                        ELSE
+                            INSERT INTO dbo.MonthlyEvaluatorTemplates (EvalYear, EvalMonth, EvaluatorID, TemplateID, UpdatedAt) VALUES (@Y, @M, @EvalID, @TID, SYSDATETIME());",
+                        new { Y = saveYear, M = saveMonth, EvalID = model.EvaluatorID, TID = targetTemplateId }, tx);
                 }
                 else
                 {
+                    var prevEffective = await ResolveEffectiveTemplateIdForMonthAsync(conn, model.EvaluatorID, saveYear, saveMonth, tx);
                     int evalRecordsCount = await conn.ExecuteScalarAsync<int>(
                         "SELECT COUNT(1) FROM dbo.EvaluationRecords WHERE TemplateID = @ID",
                         new { ID = model.TemplateID }, tx);
 
-                    if (evalRecordsCount > 0)
+                    int usedByOtherMonthsCount = await conn.ExecuteScalarAsync<int>(@"
+                        SELECT COUNT(1)
+                        FROM dbo.MonthlyEvaluatorTemplates
+                        WHERE EvaluatorID = @EvalID AND TemplateID = @ID
+                          AND (EvalYear <> @Y OR EvalMonth <> @M)",
+                        new { EvalID = model.EvaluatorID, ID = model.TemplateID, Y = saveYear, M = saveMonth }, tx);
+
+                    int hasOwnMonthRow = await conn.ExecuteScalarAsync<int>(@"
+                        SELECT COUNT(1)
+                        FROM dbo.MonthlyEvaluatorTemplates
+                        WHERE EvaluatorID = @EvalID AND EvalYear = @Y AND EvalMonth = @M",
+                        new { EvalID = model.EvaluatorID, Y = saveYear, M = saveMonth }, tx);
+
+                    int laterMonthsCount = await conn.ExecuteScalarAsync<int>(@"
+                        SELECT
+                            (SELECT COUNT(1) FROM dbo.MonthlyEvaluatorTemplates WHERE EvaluatorID = @EvalID AND (EvalYear * 100 + EvalMonth) > @ReqKey)
+                          + (SELECT COUNT(1) FROM dbo.EvaluationRecords WHERE EvaluatorID = @EvalID AND (EvalYear * 100 + EvalMonth) > @ReqKey)",
+                        new { EvalID = model.EvaluatorID, ReqKey = savePeriodKey }, tx);
+
+                    bool isPastMonth = laterMonthsCount > 0;
+                    savedForPastMonthOnly = isPastMonth;
+
+                    if (isPastMonth && prevEffective.TemplateID > 0)
+                    {
+                        var nextMonthDate = new DateTime(saveYear, saveMonth, 1).AddMonths(1);
+                        await conn.ExecuteAsync(@"
+                            IF NOT EXISTS (
+                                SELECT 1 FROM dbo.MonthlyEvaluatorTemplates
+                                WHERE EvalYear = @NY AND EvalMonth = @NM AND EvaluatorID = @EvalID
+                            )
+                            BEGIN
+                                INSERT INTO dbo.MonthlyEvaluatorTemplates (EvalYear, EvalMonth, EvaluatorID, TemplateID, UpdatedAt)
+                                VALUES (@NY, @NM, @EvalID, @PrevTID, SYSDATETIME());
+                            END",
+                            new { NY = nextMonthDate.Year, NM = nextMonthDate.Month, EvalID = model.EvaluatorID, PrevTID = prevEffective.TemplateID }, tx);
+                    }
+
+                    bool mustCreateNewVersion = evalRecordsCount > 0 || usedByOtherMonthsCount > 0 || hasOwnMonthRow == 0;
+
+                    if (mustCreateNewVersion)
                     {
                         createdNewVersion = true;
-                        await conn.ExecuteAsync(
-                            "UPDATE dbo.Templates SET IsCurrentVersion = 0 WHERE TemplateID = @ID OR TemplateGroupGuid = @GroupGuid",
-                            new { ID = model.TemplateID, GroupGuid = model.TemplateGroupGuid }, tx);
-
                         int maxVer = await conn.ExecuteScalarAsync<int>(
                             "SELECT ISNULL(MAX(VersionNumber), @Ver) FROM dbo.Templates WHERE TemplateGroupGuid = @GroupGuid",
                             new { Ver = model.VersionNumber, GroupGuid = model.TemplateGroupGuid }, tx);
 
                         newVersionNumber = maxVer + 1;
+
+                        if (!isPastMonth)
+                        {
+                            await conn.ExecuteAsync(
+                                "UPDATE dbo.Templates SET IsCurrentVersion = 0 WHERE TemplateID = @ID OR TemplateGroupGuid = @GroupGuid",
+                                new { ID = model.TemplateID, GroupGuid = model.TemplateGroupGuid }, tx);
+                        }
+
                         string insertNewVerSql = @"
                             INSERT INTO dbo.Templates (TemplateGroupGuid, EvaluatorID, VersionNumber, IsCurrentVersion, IsDeleted, CreatedByUserID)
-                            VALUES (@GroupGuid, @EvalID, @Ver, 1, 0, @UserID);
+                            VALUES (@GroupGuid, @EvalID, @Ver, @IsCur, 0, @UserID);
                             SELECT CAST(SCOPE_IDENTITY() AS INT);";
 
                         targetTemplateId = await conn.ExecuteScalarAsync<int>(insertNewVerSql, new
@@ -987,6 +1443,7 @@ namespace SchoolEvaluationERP.Services
                             GroupGuid = model.TemplateGroupGuid,
                             EvalID = model.EvaluatorID,
                             Ver = newVersionNumber,
+                            IsCur = isPastMonth ? 0 : 1,
                             UserID = AuthService.CurrentSession?.UserID
                         }, tx);
                     }
@@ -996,6 +1453,13 @@ namespace SchoolEvaluationERP.Services
                             "DELETE FROM dbo.TemplateSheets WHERE TemplateID = @ID",
                             new { ID = targetTemplateId }, tx);
                     }
+
+                    await conn.ExecuteAsync(@"
+                        IF EXISTS (SELECT 1 FROM dbo.MonthlyEvaluatorTemplates WHERE EvalYear = @Y AND EvalMonth = @M AND EvaluatorID = @EvalID)
+                            UPDATE dbo.MonthlyEvaluatorTemplates SET TemplateID = @TID, UpdatedAt = SYSDATETIME() WHERE EvalYear = @Y AND EvalMonth = @M AND EvaluatorID = @EvalID;
+                        ELSE
+                            INSERT INTO dbo.MonthlyEvaluatorTemplates (EvalYear, EvalMonth, EvaluatorID, TemplateID, UpdatedAt) VALUES (@Y, @M, @EvalID, @TID, SYSDATETIME());",
+                        new { Y = saveYear, M = saveMonth, EvalID = model.EvaluatorID, TID = targetTemplateId }, tx);
                 }
 
                 int sheetOrder = 1;
@@ -1256,11 +1720,14 @@ namespace SchoolEvaluationERP.Services
 
                 await tx.CommitAsync();
 
+                string saveMonthLabel = $"{IncentiveCalculatorService.GetArabicMonthName(saveMonth)} {saveYear} م";
                 string msg = isNew
-                    ? "تم إنشاء وحفظ قالب التقييم بنجاح."
-                    : createdNewVersion
-                        ? $"نظراً لوجود تقييمات شهرية سابقة مرتبطة بهذا القالب، تم حفظ التعديلات كـ (نسخة جديدة v{newVersionNumber}) مع بقاء التقييمات السابقة محفوظة على النسخة القديمة دون أي تأثر."
-                        : "تم حفظ التعديلات على قالب التقييم بنجاح.";
+                    ? $"✔ تم إنشاء وحفظ قالب التقييم لشهر ({saveMonthLabel}) بنجاح."
+                    : savedForPastMonthOnly
+                        ? $"✔ تم حفظ نسخة قالب مستقلة لشهر ({saveMonthLabel} — النسخة v{newVersionNumber}) فقط، دون أي تأثير على الأشهر اللاحقة المعتمدة أو السابقة."
+                        : createdNewVersion
+                            ? $"✔ تم حفظ نسخة قالب مستقلة لشهر ({saveMonthLabel} — النسخة v{newVersionNumber}) بنجاح (وسترثها الأشهر القادمة تلقائياً مع بقاء الأشهر السابقة وتقييماتها محفوظة كما هي)."
+                            : $"✔ تم حفظ التعديلات على قالب شهر ({saveMonthLabel}) بنجاح.";
 
                 return (true, msg, targetTemplateId);
             }
@@ -1278,6 +1745,13 @@ namespace SchoolEvaluationERP.Services
 
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
+
+            int? ownerEvalId = await conn.ExecuteScalarAsync<int?>(
+                "SELECT EvaluatorID FROM dbo.Templates WHERE TemplateID = @ID",
+                new { ID = templateId });
+
+            if (!ownerEvalId.HasValue || !await CanCurrentUserAccessEvaluatorAsync(conn, ownerEvalId.Value))
+                return (false, "عذراً، لا تملك صلاحية حذف هذا القالب لأنه غير مسند لحسابك.");
 
             int isSys = await conn.ExecuteScalarAsync<int>(@"
                 SELECT ISNULL(eg.IsSystemGroup, 0)
@@ -1310,6 +1784,9 @@ namespace SchoolEvaluationERP.Services
         public async Task<List<EvaluatorEmployeesSheetExportDto>> GetAllEvaluatorsWithAssignedEmployeesAsync(
             int? evalYear = null, int? evalMonth = null)
         {
+            if (AuthService.CurrentSession?.IsAdmin != true)
+                return new List<EvaluatorEmployeesSheetExportDto>();
+
             using var conn = new SqlConnection(_connectionString);
             await EnsureSchemaUpToDateAsync(conn);
             var (year, month) = await ResolvePeriodOrLatestAsync(conn, evalYear, evalMonth);
@@ -1625,6 +2102,20 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

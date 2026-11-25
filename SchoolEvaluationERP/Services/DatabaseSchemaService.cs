@@ -302,6 +302,39 @@ namespace SchoolEvaluationERP.Services
                     );
                 END
 
+                IF OBJECT_ID('dbo.TemplateAssignedUsers', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.TemplateAssignedUsers (
+                        TemplateAssignedUserID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvaluatorID INT NOT NULL,
+                        UserID INT NOT NULL,
+                        AssignedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_TmplAssignedUser_Eval_User UNIQUE (EvaluatorID, UserID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyEvaluatorTemplates', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyEvaluatorTemplates (
+                        MonthlyEvalTemplateID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        EvaluatorID INT NOT NULL,
+                        TemplateID INT NOT NULL,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyEvalTemplate UNIQUE (EvalYear, EvalMonth, EvaluatorID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.SystemSettings', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.SystemSettings (
+                        SettingKey NVARCHAR(100) NOT NULL PRIMARY KEY,
+                        SettingValue NVARCHAR(MAX) NULL,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+                    );
+                END
+
                 IF OBJECT_ID('dbo.MonthlyClosedReports', 'U') IS NULL
                 BEGIN
                     CREATE TABLE dbo.MonthlyClosedReports (
@@ -728,6 +761,39 @@ namespace SchoolEvaluationERP.Services
                     );
                 END
 
+                IF OBJECT_ID('dbo.TemplateAssignedUsers', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.TemplateAssignedUsers (
+                        TemplateAssignedUserID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvaluatorID INT NOT NULL,
+                        UserID INT NOT NULL,
+                        AssignedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_TmplAssignedUser_Eval_User UNIQUE (EvaluatorID, UserID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.MonthlyEvaluatorTemplates', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.MonthlyEvaluatorTemplates (
+                        MonthlyEvalTemplateID INT IDENTITY(1,1) PRIMARY KEY,
+                        EvalYear INT NOT NULL CHECK (EvalYear >= 2020 AND EvalYear <= 2100),
+                        EvalMonth INT NOT NULL CHECK (EvalMonth BETWEEN 1 AND 12),
+                        EvaluatorID INT NOT NULL,
+                        TemplateID INT NOT NULL,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME(),
+                        CONSTRAINT UQ_MonthlyEvalTemplate UNIQUE (EvalYear, EvalMonth, EvaluatorID)
+                    );
+                END
+
+                IF OBJECT_ID('dbo.SystemSettings', 'U') IS NULL
+                BEGIN
+                    CREATE TABLE dbo.SystemSettings (
+                        SettingKey NVARCHAR(100) NOT NULL PRIMARY KEY,
+                        SettingValue NVARCHAR(MAX) NULL,
+                        UpdatedAt DATETIME2 NOT NULL DEFAULT SYSDATETIME()
+                    );
+                END
+
                 IF OBJECT_ID('dbo.MonthlyClosedReports', 'U') IS NULL
                 BEGIN
                     CREATE TABLE dbo.MonthlyClosedReports (
@@ -889,6 +955,9 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
 
 
 

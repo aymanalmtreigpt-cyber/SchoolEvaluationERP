@@ -76,7 +76,7 @@ namespace SchoolEvaluationERP.Views
             int? yearFilter = (CmbFilterYear.SelectedItem as FilterOptionItem)?.Value;
             int? monthFilter = (CmbFilterMonth.SelectedItem as FilterOptionItem)?.Value;
 
-            var records = await _service.GetEvaluationHistoryLogsAsync(evalSearch, yearFilter, monthFilter);
+            var records = await _service.GetEvaluationHistoryLogsAsync(evalSearch, yearFilter, monthFilter, restrictToAssignedUser: true);
             GridHistoryRecords.ItemsSource = records;
             TxtRecordsCountBadge.Text = $"إجمالي السجلات المحفوظة: {records.Count}";
         }
@@ -131,7 +131,7 @@ namespace SchoolEvaluationERP.Views
 
         private async Task LoadRecordIntoDetailsAsync(int recordId, bool switchToDetailsTab)
         {
-            var workspace = await _service.LoadSavedRecordWorkspaceAsync(recordId);
+            var workspace = await _service.LoadSavedRecordWorkspaceAsync(recordId, enforceAssignedUserScope: true);
             if (workspace == null)
             {
                 MessageBox.Show("تعذر تحميل درجات سجل التقييم المحدد.", "خطأ", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -723,6 +723,8 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
 
 
 

@@ -33,6 +33,27 @@ namespace SchoolEvaluationERP.Services
             public string? SnapshotJson { get; set; }
         }
 
+        private static string NormalizeArabicSearch(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            return text.Trim()
+                .Replace('أ', 'ا')
+                .Replace('إ', 'ا')
+                .Replace('آ', 'ا')
+                .Replace('ة', 'ه')
+                .Replace('ى', 'ي')
+                .Replace("ـ", string.Empty);
+        }
+
+        private static bool MatchesReportSearch(EmployeeMonthlyReportRowDto row, string normalizedQuery)
+        {
+            if (string.IsNullOrEmpty(normalizedQuery)) return true;
+            return NormalizeArabicSearch(row.EvaluationName).Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(row.SystemName).Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(row.JobTitle).Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                || NormalizeArabicSearch(row.JobTypeName).Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase);
+        }
+
         private class RawMonthlyEvaluatorScore
         {
             public int EmployeeID { get; set; }
@@ -65,7 +86,7 @@ namespace SchoolEvaluationERP.Services
                 await conn.OpenAsync();
             }
 
-            string cleanSearch = (searchQuery ?? string.Empty).Trim();
+            string cleanSearch = NormalizeArabicSearch(searchQuery);
 
             if (!ignoreLockedSnapshot)
             {
@@ -90,11 +111,7 @@ namespace SchoolEvaluationERP.Services
 
                         if (!string.IsNullOrEmpty(cleanSearch))
                         {
-                            filteredRows = filteredRows.Where(r =>
-                                r.EvaluationName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) ||
-                                r.SystemName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) ||
-                                r.JobTitle.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) ||
-                                r.JobTypeName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase));
+                            filteredRows = filteredRows.Where(r => MatchesReportSearch(r, cleanSearch));
                         }
 
                         if (onlyDeservingIncentive)
@@ -159,11 +176,7 @@ namespace SchoolEvaluationERP.Services
                 if (!emp.IsContinuing) continue;
                 if (filterBranchId.HasValue && filterBranchId.Value > 0 && emp.BranchID != filterBranchId.Value) continue;
                 if (filterCategoryId.HasValue && filterCategoryId.Value > 0 && emp.CategoryID != filterCategoryId.Value) continue;
-                if (!string.IsNullOrEmpty(cleanSearch) &&
-                    !emp.EvaluationName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) &&
-                    !emp.SystemName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) &&
-                    !emp.JobTitle.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase) &&
-                    !emp.JobTypeName.Contains(cleanSearch, StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrEmpty(cleanSearch) && !MatchesReportSearch(emp, cleanSearch))
                 {
                     continue;
                 }
@@ -763,6 +776,10 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
+
+
+
 
 
 

@@ -46,26 +46,68 @@
                                         Style="{StaticResource DangerButton}" Height="36" Padding="14,0" Margin="0,0,0,6"
                                         Click="BtnDeleteSelectedTemplate_Click"/>
                             </WrapPanel>
+
+                            <!-- مربع كلمة سر حماية قوالب الإكسل (يظهر لحساب المدير Admin فقط) -->
+                            <Border x:Name="PanelAdminExcelPassword"
+                                    Background="#FFFBEB" BorderBrush="#F59E0B" BorderThickness="1" CornerRadius="8"
+                                    Padding="10,6" Margin="0,4,0,0" Visibility="Collapsed">
+                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock x:Name="TxtExcelPasswordTitle" Text="🔐 كلمة سر قوالب الإكسل:" FontWeight="Bold" Foreground="#92400E"
+                                               VerticalAlignment="Center" Margin="0,2,8,2"/>
+
+                                    <Grid Width="195" Height="34" Margin="0,2,6,2">
+                                        <PasswordBox x:Name="PwdExcelTemplateProtection"
+                                                     Style="{StaticResource ModernPasswordBox}" Height="34"
+                                                     ToolTip="أدخل كلمة السر التي سيتم حماية وتشفير قوالب الإكسل المستخرجة بها (للمدير فقط)"
+                                                     PasswordChanged="PwdExcelTemplateProtection_PasswordChanged"/>
+                                        <TextBox x:Name="TxtExcelTemplateProtectionVisible"
+                                                 Style="{StaticResource ModernTextBox}" Height="34"
+                                                 Visibility="Collapsed"
+                                                 ToolTip="كلمة سر حماية قوالب الإكسل"
+                                                 TextChanged="TxtExcelTemplateProtectionVisible_TextChanged"/>
+                                    </Grid>
+
+                                    <Button x:Name="BtnToggleExcelPasswordVisibility" Content="👁 إظهار"
+                                            Style="{StaticResource SecondaryButton}" Height="34" Padding="10,0" FontSize="12" Margin="0,2,6,2"
+                                            ToolTip="إظهار أو حجب كلمة سر قوالب الإكسل"
+                                            Click="BtnToggleExcelPasswordVisibility_Click"/>
+
+                                    <Button x:Name="BtnSaveExcelPassword" Content="💾 حفظ كلمة السر"
+                                            Style="{StaticResource PrimaryButton}" Height="34" Padding="12,0" FontSize="12" Margin="0,2,10,2"
+                                            ToolTip="حفظ كلمة السر المعتمدة لحماية جميع قوالب الإكسل المستخرجة"
+                                            Click="BtnSaveExcelPassword_Click"/>
+
+                                    <TextBlock x:Name="TxtExcelPasswordStatusHint"
+                                               Text="" FontSize="11.5" FontWeight="SemiBold" Foreground="#92400E"
+                                               VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,2,0,2"/>
+                                </WrapPanel>
+                            </Border>
                         </StackPanel>
 
                         <Border Grid.Row="1" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
-                            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                <TextBlock Text="📅 معاينة وتصدير شهر:" FontWeight="Bold" Foreground="#1E3A8A" VerticalAlignment="Center" Margin="0,2,6,4"/>
-                                <ComboBox x:Name="CmbTemplatePreviewYear" Style="{StaticResource ModernComboBox}" Width="88" Height="35" Margin="0,2,6,4"
-                                          ToolTip="تحديد السنة لمعاينة وتصدير القوالب حسب إسناد الموظفين فيها"
-                                          SelectionChanged="TemplatePeriodFilter_SelectionChanged"/>
-                                <ComboBox x:Name="CmbTemplatePreviewMonth" Style="{StaticResource ModernComboBox}" Width="135" Height="35" Margin="0,2,14,4"
-                                          DisplayMemberPath="DisplayText" SelectedValuePath="MonthNumber"
-                                          ToolTip="تحديد الشهر لمعاينة وتصدير القوالب حسب إسناد الموظفين فيه"
-                                          SelectionChanged="TemplatePeriodFilter_SelectionChanged"/>
+                            <StackPanel>
+                                <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock Text="📅 شهر وسنة القالب:" FontWeight="Bold" Foreground="#1E3A8A" VerticalAlignment="Center" Margin="0,2,6,4"/>
+                                    <ComboBox x:Name="CmbTemplatePreviewYear" Style="{StaticResource ModernComboBox}" Width="88" Height="35" Margin="0,2,6,4"
+                                              ToolTip="تحديد السنة لعرض وتعديل وتصدير شكل القالب وموظفيه لهذا الشهر"
+                                              SelectionChanged="TemplatePeriodFilter_SelectionChanged"/>
+                                    <ComboBox x:Name="CmbTemplatePreviewMonth" Style="{StaticResource ModernComboBox}" Width="135" Height="35" Margin="0,2,14,4"
+                                              DisplayMemberPath="DisplayText" SelectedValuePath="MonthNumber"
+                                              ToolTip="تحديد الشهر لعرض وتعديل وتصدير شكل القالب وموظفيه لهذا الشهر"
+                                              SelectionChanged="TemplatePeriodFilter_SelectionChanged"/>
 
-                                <TextBlock Text="🔍 بحث:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,6,4"/>
-                                <TextBox x:Name="TxtSearchTemplateEvaluator" Style="{StaticResource ModernTextBox}" Width="210" Height="35" Margin="0,2,8,4"
-                                         ToolTip="اكتب اسم المقيم أو اسم مجموعته لفلترة القوالب..."
-                                         TextChanged="TxtSearchTemplateEvaluator_TextChanged"/>
-                                <Button Content="عرض الكل" Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,2,12,4" Click="BtnResetTemplateSearch_Click"/>
-                                <TextBlock x:Name="TxtTemplatesCountBadge" Text="إجمالي القوالب الفعالة: 0" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" VerticalAlignment="Center" Margin="0,2,0,4"/>
-                            </WrapPanel>
+                                    <TextBlock Text="🔍 بحث:" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,2,6,4"/>
+                                    <TextBox x:Name="TxtSearchTemplateEvaluator" Style="{StaticResource ModernTextBox}" Width="210" Height="35" Margin="0,2,8,4"
+                                             ToolTip="اكتب اسم المقيم أو اسم مجموعته لفلترة القوالب..."
+                                             TextChanged="TxtSearchTemplateEvaluator_TextChanged"/>
+                                    <Button Content="عرض الكل" Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,2,12,4" Click="BtnResetTemplateSearch_Click"/>
+                                    <TextBlock x:Name="TxtTemplatesCountBadge" Text="إجمالي القوالب الفعالة: 0" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}" VerticalAlignment="Center" Margin="0,2,0,4"/>
+                                </WrapPanel>
+
+                                <Border x:Name="BadgeTemplatesPeriodStatus" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="6" Padding="10,4" Margin="0,5,0,0">
+                                    <TextBlock x:Name="TxtTemplatesPeriodStatus" Text="جاري قراءة حالة قوالب الشهر..." FontSize="12" FontWeight="Bold" Foreground="#1E40AF" TextWrapping="Wrap"/>
+                                </Border>
+                            </StackPanel>
                         </Border>
 
                         <DataGrid Grid.Row="2" x:Name="GridSavedTemplates"
@@ -79,6 +121,51 @@
                             <DataGrid.Columns>
                                 <DataGridTextColumn Header="رقم القالب" Binding="{Binding TemplateID}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="80" MinWidth="80"/>
                                 <DataGridTextColumn Header="المقيم المسؤول والمجموعة" Binding="{Binding EvaluatorWithGroupDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="210" MinWidth="180"/>
+                                <DataGridTemplateColumn x:Name="ColAssignedUsers" Header="المستخدم المسؤول" Width="190" MinWidth="170">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="{Binding AssignedUsersBadgeText}"
+                                                    ToolTip="{Binding AssignedUsersToolTip}"
+                                                    Cursor="Hand"
+                                                    Height="30" Padding="10,0" FontSize="12" FontWeight="Bold"
+                                                    BorderThickness="1.3"
+                                                    Click="BtnAssignTemplateUsers_Click">
+                                                <Button.Style>
+                                                    <Style TargetType="Button">
+                                                        <Setter Property="Background" Value="#ECFDF5"/>
+                                                        <Setter Property="BorderBrush" Value="#6EE7B7"/>
+                                                        <Setter Property="Foreground" Value="#065F46"/>
+                                                        <Setter Property="Template">
+                                                            <Setter.Value>
+                                                                <ControlTemplate TargetType="Button">
+                                                                    <Border Background="{TemplateBinding Background}"
+                                                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                                                            CornerRadius="6"
+                                                                            Padding="{TemplateBinding Padding}">
+                                                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                                    </Border>
+                                                                </ControlTemplate>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasInactiveAssignedUsers}" Value="True">
+                                                                <Setter Property="Background" Value="#FEF2F2"/>
+                                                                <Setter Property="BorderBrush" Value="#FCA5A5"/>
+                                                                <Setter Property="Foreground" Value="#B91C1C"/>
+                                                            </DataTrigger>
+                                                            <DataTrigger Binding="{Binding HasNoAssignedUsers}" Value="True">
+                                                                <Setter Property="Background" Value="#FEF3C7"/>
+                                                                <Setter Property="BorderBrush" Value="#F59E0B"/>
+                                                                <Setter Property="Foreground" Value="#92400E"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="النسخة" Binding="{Binding VersionDisplay}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="80" MinWidth="75"/>
                                 <DataGridTextColumn Header="الأوراق" Binding="{Binding SheetsCount}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="75" MinWidth="70"/>
                                 <DataGridTextColumn Header="الموظفون المستمرون" Binding="{Binding TotalEmployeesCount}" ElementStyle="{StaticResource WrappingCellTextStyle}" Width="135" MinWidth="125"/>
@@ -119,6 +206,10 @@
                                         <TextBlock x:Name="TxtReadOnlyBadge" Text="🔒 وضع القراءة فقط (اضغط على «✏ الانتقال إلى وضع التعديل» لتعديل القالب)" Foreground="#92400E" FontWeight="Bold" FontSize="12" TextWrapping="Wrap"/>
                                     </Border>
                                 </WrapPanel>
+
+                                <Border x:Name="BadgeDesignerPeriodStatus" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="6" Padding="10,4" Margin="0,2,0,5" Visibility="Collapsed">
+                                    <TextBlock x:Name="TxtDesignerPeriodStatus" Text="" FontSize="12" FontWeight="Bold" Foreground="#1E40AF" TextWrapping="Wrap"/>
+                                </Border>
 
                                 <TextBlock x:Name="TxtDesignerSubStatus"
                                            Text="يظهر في القائمة فقط الموظفون المستمرون المسندون لهذا المقيم في الفئة والفرع المحددين للورقة."
@@ -325,6 +416,11 @@
         </TabControl>
     </Grid>
 </UserControl>
+
+
+
+
+
 
 
 

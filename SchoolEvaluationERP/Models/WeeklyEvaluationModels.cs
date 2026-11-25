@@ -346,6 +346,17 @@ namespace SchoolEvaluationERP.Models
             NotifyCalculatedFields();
         }
 
+        public void ClearMarksToEmpty()
+        {
+            DirectCalculatedScoreOverride = null;
+            for (int i = 0; i < _scores.Length; i++)
+            {
+                _scores[i] = null;
+            }
+            OnPropertyChanged("Item[]");
+            NotifyCalculatedFields();
+        }
+
         public decimal RawCriteriaSumOutOf100
         {
             get
@@ -506,6 +517,7 @@ namespace SchoolEvaluationERP.Models
         public bool HasAnyDifferences => NewlyAddedToTemplate.Count > 0 || RemovedFromTemplate.Count > 0;
     }
 }
+
 
 
 

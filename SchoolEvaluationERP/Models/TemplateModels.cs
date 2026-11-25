@@ -39,15 +39,90 @@ namespace SchoolEvaluationERP.Models
         public int TotalEmployeesCount { get; set; }
         public int LinkedEvaluationsCount { get; set; }
         public string SheetsSummary { get; set; } = string.Empty;
+        public int RequestedYear { get; set; }
+        public int RequestedMonth { get; set; }
+        public int? EffectiveTemplateYear { get; set; }
+        public int? EffectiveTemplateMonth { get; set; }
+        public bool IsOwnMonthVersion { get; set; }
+        public bool IsPeriodMonthLocked { get; set; }
 
         public string EvaluatorWithGroupDisplay => string.IsNullOrWhiteSpace(GroupName)
             ? EvaluatorName
             : $"{EvaluatorName} ({GroupName})";
         public string VersionDisplay => $"النسخة v{VersionNumber}";
         public string CreatedAtDisplay => CreatedAt.ToString("yyyy-MM-dd");
-        public string StatusDisplay => LinkedEvaluationsCount > 0
-            ? $"مرتبط بـ ({LinkedEvaluationsCount}) تقييم شهري (التعديل ينشئ نسخة جديدة)"
-            : "جاهز للتعديل المباشر";
+        public string StatusDisplay
+        {
+            get
+            {
+                if (IsPeriodMonthLocked)
+                    return "🔒 شهر معتمد ومغلق نهائياً (للقراءة فقط)";
+
+                if (EffectiveTemplateYear.HasValue && EffectiveTemplateMonth.HasValue)
+                {
+                    string effMonthName = Services.IncentiveCalculatorService.GetArabicMonthName(EffectiveTemplateMonth.Value);
+                    if (IsOwnMonthVersion)
+                    {
+                        return LinkedEvaluationsCount > 0
+                            ? $"✔ نسخة مستقلة للشهر (مرتبطة بـ {LinkedEvaluationsCount} تقييم)"
+                            : "✔ نسخة مستقلة للشهر (جاهزة للتعديل)";
+                    }
+                    return $"🔗 موروث من ({effMonthName} {EffectiveTemplateYear}) — التعديل يحفظ نسخة مستقلة";
+                }
+
+                return LinkedEvaluationsCount > 0
+                    ? $"مرتبط بـ ({LinkedEvaluationsCount}) تقييم شهري (التعديل ينشئ نسخة جديدة)"
+                    : "جاهز للتعديل المباشر";
+            }
+        }
+
+        public List<TemplateAssignedUserDto> AssignedUsers { get; set; } = new();
+        public int AssignedUsersCount => AssignedUsers.Count;
+        public bool HasNoAssignedUsers => AssignedUsers.Count == 0;
+        public bool HasInactiveAssignedUsers => AssignedUsers.Any(u => !u.IsActive);
+
+        public string AssignedUsersBadgeText
+        {
+            get
+            {
+                if (AssignedUsers.Count == 0)
+                    return "⚠ غير مسند لمستخدم";
+                if (AssignedUsers.Count == 1)
+                    return AssignedUsers[0].IsActive
+                        ? $"👤 {AssignedUsers[0].FullName}"
+                        : $"⚠ {AssignedUsers[0].FullName} (موقوف)";
+                string warn = HasInactiveAssignedUsers ? " ⚠" : string.Empty;
+                return $"👥 {AssignedUsers[0].FullName} (+{AssignedUsers.Count - 1}){warn}";
+            }
+        }
+
+        public string AssignedUsersToolTip
+        {
+            get
+            {
+                if (AssignedUsers.Count == 0)
+                    return "تحذير: لم يتم إسناد هذا القالب لأي مستخدم بعد — اضغط لتحديد المستخدمين المسؤولين عن القالب";
+
+                var lines = AssignedUsers.Select(u => u.IsActive
+                    ? $"• {u.FullName} ({u.Username})"
+                    : $"• {u.FullName} ({u.Username}) [⚠ حساب موقوف]");
+                return "المستخدمون المسؤولون عن هذا القالب (اضغط للتعديل أو الإضافة أو الحذف):\n" + string.Join("\n", lines);
+            }
+        }
+    }
+
+    public class TemplateAssignedUserDto
+    {
+        public int UserID { get; set; }
+        public string Username { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
+        public bool IsAdmin { get; set; }
+        public bool IsActive { get; set; } = true;
+
+        public string DropdownDisplay => $"{FullName} ({Username})";
+        public string ListDisplay => IsActive
+            ? $"{FullName} ({Username})"
+            : $"{FullName} ({Username}) — ⚠ حساب موقوف";
     }
 
     public class CriteriaColumnModel : INotifyPropertyChanged
@@ -332,6 +407,42 @@ namespace SchoolEvaluationERP.Models
         public string SystemGroupCode { get; set; } = string.Empty;
         public int MaxAllowedCount { get; set; } = 3;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
+        public int RequestedYear { get; set; }
+        public int RequestedMonth { get; set; }
+        public int? EffectiveTemplateYear { get; set; }
+        public int? EffectiveTemplateMonth { get; set; }
+        public bool IsOwnMonthVersion { get; set; }
+        public bool IsMonthLocked { get; set; }
+        public string LockedByUserName { get; set; } = string.Empty;
+
+        public string MonthlyTemplateStatusText
+        {
+            get
+            {
+                if (RequestedYear <= 0 || RequestedMonth <= 0)
+                    return string.Empty;
+
+                string reqName = $"{Services.IncentiveCalculatorService.GetArabicMonthName(RequestedMonth)} {RequestedYear} م";
+
+                if (IsMonthLocked)
+                    return $"🔒 شهر ({reqName}) معتمد ومغلق نهائياً بواسطة ({LockedByUserName}) — شكل القالب محفوظ للقراءة فقط";
+
+                if (IsSystemTemplate)
+                    return $"⚙ قالب نظام تلقائي لشهر ({reqName})";
+
+                if (IsOwnMonthVersion)
+                    return $"✔ نسخة قالب مستقلة لشهر ({reqName}) — النسخة v{VersionNumber}";
+
+                if (EffectiveTemplateYear.HasValue && EffectiveTemplateMonth.HasValue)
+                {
+                    string effName = $"{Services.IncentiveCalculatorService.GetArabicMonthName(EffectiveTemplateMonth.Value)} {EffectiveTemplateYear.Value} م";
+                    return $"🔗 يرث تلقائياً شكل القالب من ({effName}) — أي تعديل سيحفظ نسخة مستقلة لشهر ({reqName}) دون التأثير على الشهور الأخرى";
+                }
+
+                return $"⚙ شكل القالب الافتراضي لشهر ({reqName}) — أي تعديل سيحفظ نسخة مستقلة لهذا الشهر";
+            }
+        }
+
         public ObservableCollection<TemplateSheetModel> Sheets { get; set; } = new();
     }
 
@@ -361,5 +472,9 @@ namespace SchoolEvaluationERP.Models
         public List<EvaluatorEmployeeExportRowDto> Employees { get; set; } = new();
     }
 }
+
+
+
+
 
 

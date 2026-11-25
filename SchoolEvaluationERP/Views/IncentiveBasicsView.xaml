@@ -38,6 +38,12 @@
                                 ToolTip="لصق قيم الحوافز المنسوخة على الشهر المعروض حالياً"
                                 Click="BtnPasteIncentiveLimits_Click"/>
 
+                        <Button x:Name="BtnAllocateCategoryWeights" Content="⚖ تخصيص المقيمين ودرجات التقييم للفئات"
+                                Style="{StaticResource SecondaryButton}" Height="35" Padding="12,0" Margin="0,0,8,4"
+                                Background="#EEF2FF" BorderBrush="#818CF8" Foreground="#3730A3" FontWeight="Bold"
+                                ToolTip="فتح نافذة تخصيص المقيمين وتوزيع الـ 100 درجة للفئات للشهر المحدد وتحديث قراءات الحوافز فوراً"
+                                Click="BtnAllocateCategoryWeights_Click"/>
+
                         <Button x:Name="BtnSaveCategoryIncentives" Content="💾 حفظ واعتماد حدود الحوافز للفئات"
                                 Style="{StaticResource PrimaryButton}" Height="35" Padding="16,0" Margin="0,0,0,4"
                                 Click="BtnSaveCategoryIncentives_Click"/>
@@ -166,5 +172,6 @@
         </Border>
     </Grid>
 </UserControl>
+
 
 

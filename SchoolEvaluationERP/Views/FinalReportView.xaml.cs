@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -151,21 +152,80 @@ namespace SchoolEvaluationERP.Views
                 return;
 
             string mName = IncentiveCalculatorService.GetArabicMonthName(month);
-            var confirm = MessageBox.Show(
-                $"هل أنت متأكد من اعتماد وإغلاق شهر ({mName} {year} م) نهائياً؟\n\n" +
-                "• سيتم حفظ وتجميد نسخة كاملة من القيد المحاسبي ودرجات وحوافز هذا الشهر.\n" +
-                "• لن يتأثر هذا الشهر بأي تعديلات لاحقة في المقيمين أو الفئات أو الموظفين.\n" +
-                "• سيُمنع تعديل درجات أو حوافز هذا الشهر ما لم يقم مدير النظام بفك الإغلاق.",
-                "تأكيد اعتماد وإغلاق الشهر المالي",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-
-            if (confirm != MessageBoxResult.Yes) return;
-
             string debitTitle = string.IsNullOrWhiteSpace(TxtDebitAccount.Text)
                 ? AppConfigService.DefaultDebitAccountName
                 : TxtDebitAccount.Text.Trim();
             bool round50 = ChkRoundTo50.IsChecked == true;
+
+            MonthlyFinalReportSummary fullCheckReport;
+            BtnLockMonth.IsEnabled = false;
+            try
+            {
+                fullCheckReport = await _reportService.GenerateMonthlyReportAsync(
+                    year,
+                    month,
+                    debitTitle,
+                    AppConfigService.DefaultMaxIncentiveAmount,
+                    AppConfigService.DefaultMinIncentiveAmount,
+                    round50,
+                    filterBranchId: null,
+                    filterCategoryId: null,
+                    searchQuery: "",
+                    onlyDeservingIncentive: false,
+                    ignoreLockedSnapshot: true,
+                    onlyIncompleteEvaluations: false);
+            }
+            finally
+            {
+                BtnLockMonth.IsEnabled = true;
+            }
+
+            if (fullCheckReport.Rows.Count == 0)
+            {
+                MessageBox.Show("لا توجد بيانات موظفين في هذا الشهر لاعتمادها وإغلاقها.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var incompleteRows = fullCheckReport.Rows.Where(r => !r.IsAllEvaluatorsCompleted).ToList();
+            MessageBoxResult confirm;
+
+            if (incompleteRows.Count > 0)
+            {
+                var sampleNames = incompleteRows
+                    .Take(5)
+                    .Select(r => $"• {r.EvaluationName} ({r.CategoryName})")
+                    .ToList();
+                if (incompleteRows.Count > 5)
+                {
+                    sampleNames.Add($"• ... و ({incompleteRows.Count - 5}) موظفين آخرين غير مكتملين");
+                }
+
+                confirm = MessageBox.Show(
+                    $"⚠ تحذير هام قبل الإغلاق النهائي لشهر ({mName} {year} م):\n\n" +
+                    $"يوجد ({incompleteRows.Count}) موظف من أصل ({fullCheckReport.Rows.Count}) حالتهم (غير مكتمل ⚠) ولم تكتمل تقييماتهم من جميع المقيمين بعد:\n" +
+                    string.Join("\n", sampleNames) + "\n\n" +
+                    "• يمكنك الضغط على (لا) ثم تفعيل خيار «إظهار الموظفين غير المكتملين فقط ⚠» لمراجعتهم وإكمال درجاتهم أولاً.\n" +
+                    "• إذا ضغطت (نعم)، سيتم اعتماد وتجميد الشهر فوراً بالدرجات الحالية الناقصة ولن يُسمح بالتعديل إلا بعد فك الإغلاق.\n\n" +
+                    "هل أنت متأكد من المتابعة وإغلاق الشهر رغم وجود موظفين غير مكتملين؟",
+                    "⚠ تحذير: يوجد موظفون غير مكتملين",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning,
+                    MessageBoxResult.No);
+            }
+            else
+            {
+                confirm = MessageBox.Show(
+                    $"✔ جميع الموظفين ({fullCheckReport.Rows.Count} موظف) مكتملو التقييم في شهر ({mName} {year} م).\n\n" +
+                    $"هل أنت متأكد من اعتماد وإغلاق شهر ({mName} {year} م) نهائياً؟\n" +
+                    "• سيتم حفظ وتجميد نسخة كاملة من القيد المحاسبي ودرجات وحوافز هذا الشهر.\n" +
+                    "• لن يتأثر هذا الشهر بأي تعديلات لاحقة في المقيمين أو الفئات أو الموظفين.\n" +
+                    "• سيُمنع تعديل درجات أو حوافز هذا الشهر ما لم يقم مدير النظام بفك الإغلاق.",
+                    "تأكيد اعتماد وإغلاق الشهر المالي",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+            }
+
+            if (confirm != MessageBoxResult.Yes) return;
 
             BtnLockMonth.IsEnabled = false;
             var (ok, msg) = await _reportService.LockMonthReportAsync(
@@ -343,6 +403,8 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
 
 
 

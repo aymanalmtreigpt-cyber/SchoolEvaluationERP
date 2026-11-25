@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -12,10 +13,12 @@ namespace SchoolEvaluationERP
         private readonly List<Button> _navButtons;
         private bool _isSidebarCollapsed;
         private double _savedSidebarWidth = 260;
+        private bool _bypassClosingPrompt;
 
         public MainWindow()
         {
             InitializeComponent();
+            Closing += MainWindow_Closing;
 
             _navButtons = new List<Button>
             {
@@ -108,8 +111,30 @@ namespace SchoolEvaluationERP
             }
         }
 
+        private bool ConfirmLeaveCurrentView(string actionLabel)
+        {
+            if (MainContentHost.Content is TemplatesView tv && !tv.ConfirmDiscardUnsavedChanges(actionLabel))
+                return false;
+
+            if (MainContentHost.Content is ScoreEntryView se && !se.ConfirmDiscardUnsavedChanges(actionLabel))
+                return false;
+
+            return true;
+        }
+
+        private void MainWindow_Closing(object? sender, CancelEventArgs e)
+        {
+            if (!_bypassClosingPrompt && !ConfirmLeaveCurrentView("إغلاق البرنامج"))
+            {
+                e.Cancel = true;
+            }
+        }
+
         private void NavigateToModule(string moduleCode, Button activeBtn)
         {
+            if (MainContentHost.Content != null && !ConfirmLeaveCurrentView("الانتقال إلى شاشة أخرى"))
+                return;
+
             foreach (var btn in _navButtons)
             {
                 btn.Background = Brushes.Transparent;
@@ -196,6 +221,11 @@ namespace SchoolEvaluationERP
 
         private void BtnLogout_Click(object sender, RoutedEventArgs e)
         {
+            if (!ConfirmLeaveCurrentView("تسجيل الخروج"))
+                return;
+
+            _bypassClosingPrompt = true;
+            TemplatesView.ClearCopiedCriteriaBuffer();
             AuthService.Logout();
             var login = new LoginWindow();
             login.Show();
@@ -203,4 +233,9 @@ namespace SchoolEvaluationERP
         }
     }
 }
+
+
+
+
+
 

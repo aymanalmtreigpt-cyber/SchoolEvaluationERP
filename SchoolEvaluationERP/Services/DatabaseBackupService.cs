@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Dapper;
@@ -50,6 +52,9 @@ namespace SchoolEvaluationERP.Services
         public List<Dictionary<string, object?>> MonthlyEmployeeEvaluators { get; set; } = new();
         public List<Dictionary<string, object?>> MonthlyEmployeeSnapshots { get; set; } = new();
         public List<Dictionary<string, object?>> TemplateExcludedEmployees { get; set; } = new();
+        public List<Dictionary<string, object?>> TemplateAssignedUsers { get; set; } = new();
+        public List<Dictionary<string, object?>> MonthlyEvaluatorTemplates { get; set; } = new();
+        public List<Dictionary<string, object?>> SystemSettings { get; set; } = new();
         public List<Dictionary<string, object?>> MonthlyClosedReports { get; set; } = new();
     }
 
@@ -200,10 +205,15 @@ namespace SchoolEvaluationERP.Services
                     firstChars = new string(buf, 0, read).TrimStart();
                 }
 
+                string? autoSafetyBackupPath = await CreateAutoSafetyBackupBeforeRestoreAsync();
+                string safetyNote = !string.IsNullOrWhiteSpace(autoSafetyBackupPath)
+                    ? $"\n\n🛡 تم حفظ نسخة أمان تلقائية لبياناتك السابقة في:\n{autoSafetyBackupPath}"
+                    : string.Empty;
+
                 if (firstChars.StartsWith("{"))
                 {
                     await ImportPortableSnapshotAsync(sourceFilePath);
-                    return (true, "تمت استعادة جميع بيانات النظام من النسخة الاحتياطية بنجاح!");
+                    return (true, $"تمت استعادة جميع بيانات النظام من النسخة الاحتياطية بنجاح!{safetyNote}");
                 }
 
                 var builder = new SqlConnectionStringBuilder(_connectionString);
@@ -279,11 +289,44 @@ namespace SchoolEvaluationERP.Services
                 using var checkConn = new SqlConnection(_connectionString);
                 await DatabaseSchemaService.ForceReverifySchemaAsync(checkConn);
 
-                return (true, $"تمت استعادة قاعدة البيانات ({dbName}) بالكامل من النسخة الاحتياطية بنجاح!");
+                return (true, $"تمت استعادة قاعدة البيانات ({dbName}) بالكامل من النسخة الاحتياطية بنجاح!{safetyNote}");
             }
             catch (Exception ex)
             {
                 return (false, $"حدث خطأ أثناء استعادة النسخة الاحتياطية:\n{ex.Message}");
+            }
+        }
+
+        private async Task<string?> CreateAutoSafetyBackupBeforeRestoreAsync()
+        {
+            try
+            {
+                string autoBackupDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "SchoolEvaluationERP_AutoBackups");
+                Directory.CreateDirectory(autoBackupDir);
+
+                string fileName = $"AutoSafetyBackup_{DateTime.Now:yyyyMMdd_HHmmss}.json";
+                string fullPath = Path.Combine(autoBackupDir, fileName);
+
+                await ExportPortableSnapshotAsync(fullPath);
+
+                var oldFiles = new DirectoryInfo(autoBackupDir)
+                    .GetFiles("AutoSafetyBackup_*.json")
+                    .OrderByDescending(f => f.CreationTimeUtc)
+                    .Skip(10)
+                    .ToList();
+
+                foreach (var oldFile in oldFiles)
+                {
+                    try { oldFile.Delete(); } catch { }
+                }
+
+                return fullPath;
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -345,6 +388,9 @@ namespace SchoolEvaluationERP.Services
             {
                 await conn.ExecuteAsync(@"
                     DELETE FROM dbo.MonthlyClosedReports;
+                    DELETE FROM dbo.SystemSettings;
+                    DELETE FROM dbo.MonthlyEvaluatorTemplates;
+                    DELETE FROM dbo.TemplateAssignedUsers;
                     DELETE FROM dbo.TemplateExcludedEmployees;
                     DELETE FROM dbo.MonthlyEmployeeSnapshots;
                     DELETE FROM dbo.MonthlyEmployeeEvaluators;
@@ -430,25 +476,44 @@ namespace SchoolEvaluationERP.Services
         {
             if (rows == null || rows.Count == 0) return;
 
+            var sqlColTypes = new Dictionary<string, Type>(StringComparer.OrdinalIgnoreCase);
+            using (var schemaCmd = new SqlCommand($"SELECT TOP 0 * FROM {tableName}", conn, tx))
+            using (var schemaReader = await schemaCmd.ExecuteReaderAsync(CommandBehavior.SchemaOnly))
+            {
+                for (int i = 0; i < schemaReader.FieldCount; i++)
+                {
+                    sqlColTypes[schemaReader.GetName(i)] = schemaReader.GetFieldType(i);
+                }
+            }
+
             var dt = new DataTable();
+            var activeCols = new List<(string ColName, Type TargetType)>();
             foreach (string colName in rows[0].Keys)
             {
-                dt.Columns.Add(colName, typeof(object));
+                if (sqlColTypes.Count > 0 && !sqlColTypes.ContainsKey(colName))
+                    continue;
+
+                Type targetType = sqlColTypes.TryGetValue(colName, out var foundType) ? foundType : typeof(object);
+                dt.Columns.Add(colName, targetType);
+                activeCols.Add((colName, targetType));
             }
 
             foreach (var r in rows)
             {
                 var dr = dt.NewRow();
-                foreach (var kv in r)
+                foreach (var (colName, targetType) in activeCols)
                 {
-                    if (kv.Value is JsonElement je)
+                    if (!r.TryGetValue(colName, out var rawVal) || rawVal == null)
                     {
-                        dr[kv.Key] = ConvertJsonElement(je) ?? DBNull.Value;
+                        dr[colName] = DBNull.Value;
+                        continue;
                     }
-                    else
-                    {
-                        dr[kv.Key] = kv.Value ?? DBNull.Value;
-                    }
+
+                    object? converted = rawVal is JsonElement je
+                        ? ConvertJsonElement(je, targetType)
+                        : ConvertRawValue(rawVal, targetType);
+
+                    dr[colName] = converted ?? DBNull.Value;
                 }
                 dt.Rows.Add(dr);
             }
@@ -467,11 +532,64 @@ namespace SchoolEvaluationERP.Services
             await bulk.WriteToServerAsync(dt);
         }
 
-        private static object? ConvertJsonElement(JsonElement je)
+        private static object? ConvertJsonElement(JsonElement je, Type targetType)
         {
+            if (je.ValueKind == JsonValueKind.Null || je.ValueKind == JsonValueKind.Undefined)
+                return null;
+
+            if (targetType == typeof(Guid))
+            {
+                string? s = je.ValueKind == JsonValueKind.String ? je.GetString() : je.ToString();
+                return Guid.TryParse(s, out Guid g) ? g : null;
+            }
+
+            if (targetType == typeof(DateTime))
+            {
+                if (je.ValueKind == JsonValueKind.String && je.TryGetDateTime(out DateTime dt))
+                    return dt;
+                string? s = je.ValueKind == JsonValueKind.String ? je.GetString() : je.ToString();
+                return DateTime.TryParse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTime parsedDt)
+                    ? parsedDt
+                    : (DateTime.TryParse(s, out DateTime fallbackDt) ? fallbackDt : null);
+            }
+
+            if (targetType == typeof(bool))
+            {
+                return je.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Number => je.TryGetInt64(out long n) && n != 0,
+                    JsonValueKind.String => bool.TryParse(je.GetString(), out bool b)
+                        ? b
+                        : (je.GetString() == "1"),
+                    _ => false
+                };
+            }
+
+            if (targetType == typeof(int))
+                return je.ValueKind == JsonValueKind.Number ? je.GetInt32() : (int.TryParse(je.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out int v) ? v : null);
+
+            if (targetType == typeof(long))
+                return je.ValueKind == JsonValueKind.Number ? je.GetInt64() : (long.TryParse(je.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out long v) ? v : null);
+
+            if (targetType == typeof(short))
+                return je.ValueKind == JsonValueKind.Number ? je.GetInt16() : (short.TryParse(je.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out short v) ? v : null);
+
+            if (targetType == typeof(byte))
+                return je.ValueKind == JsonValueKind.Number ? je.GetByte() : (byte.TryParse(je.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out byte v) ? v : null);
+
+            if (targetType == typeof(decimal))
+                return je.ValueKind == JsonValueKind.Number ? je.GetDecimal() : (decimal.TryParse(je.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out decimal v) ? v : null);
+
+            if (targetType == typeof(double))
+                return je.ValueKind == JsonValueKind.Number ? je.GetDouble() : (double.TryParse(je.GetString(), NumberStyles.Any, CultureInfo.InvariantCulture, out double v) ? v : null);
+
+            if (targetType == typeof(string))
+                return je.ValueKind == JsonValueKind.String ? je.GetString() : je.ToString();
+
             return je.ValueKind switch
             {
-                JsonValueKind.Null => null,
                 JsonValueKind.True => true,
                 JsonValueKind.False => false,
                 JsonValueKind.Number => je.TryGetInt64(out long l) ? l : je.GetDecimal(),
@@ -479,8 +597,34 @@ namespace SchoolEvaluationERP.Services
                 _ => je.ToString()
             };
         }
+
+        private static object? ConvertRawValue(object value, Type targetType)
+        {
+            if (targetType == typeof(object) || targetType.IsInstanceOfType(value))
+                return value;
+
+            if (targetType == typeof(Guid))
+                return Guid.TryParse(value.ToString(), out Guid g) ? g : null;
+
+            if (targetType == typeof(DateTime))
+                return DateTime.TryParse(value.ToString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out DateTime dt) ? dt : null;
+
+            return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+        }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

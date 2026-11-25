@@ -13,6 +13,7 @@ namespace SchoolEvaluationERP.Views
     public partial class IncentiveBasicsView : UserControl
     {
         private readonly IncentiveAndBalancingService _service = new();
+        private readonly MasterDataService _masterDataService = new();
         private List<CategoryIncentiveSettingRow> _rows = new();
         private bool _isInitializing;
 
@@ -23,6 +24,10 @@ namespace SchoolEvaluationERP.Views
             AuthService.CurrentSession?.HasPermission("IncentiveBasics", "update") == true ||
             AuthService.CurrentSession?.HasPermission("IncentiveBasics", "insert") == true ||
             AuthService.CurrentSession?.HasPermission("MasterData", "update") == true;
+
+        public bool CanAllocateCategoryWeights =>
+            AuthService.CurrentSession?.HasPermission("MasterData", "update") == true ||
+            AuthService.CurrentSession?.HasPermission("MasterData", "insert") == true;
 
         public IncentiveBasicsView()
         {
@@ -47,6 +52,10 @@ namespace SchoolEvaluationERP.Views
             BtnApplyQuickToAll.IsEnabled = canEdit;
             TxtQuickMax.IsEnabled = canEdit;
             TxtQuickMin.IsEnabled = canEdit;
+            if (BtnAllocateCategoryWeights != null)
+            {
+                BtnAllocateCategoryWeights.Visibility = CanAllocateCategoryWeights ? Visibility.Visible : Visibility.Collapsed;
+            }
             UpdateCopyPasteButtonsState();
         }
 
@@ -84,7 +93,9 @@ namespace SchoolEvaluationERP.Views
             _isInitializing = false;
         }
 
-        private async Task LoadCategoryIncentiveRowsAsync()
+        private async Task LoadCategoryIncentiveRowsAsync(
+            Dictionary<int, (decimal MaxAmt, decimal MinAmt)>? preservedLimits = null,
+            int? selectCategoryId = null)
         {
             if (_isInitializing || !IsLoaded) return;
             if (CmbYear.SelectedItem is not int year || CmbMonth.SelectedValue is not int month)
@@ -93,23 +104,50 @@ namespace SchoolEvaluationERP.Views
             bool round50 = ChkRoundTo50.IsChecked == true;
             _rows = await _service.GetCategoriesIncentiveRowsAsync(year, month, round50);
 
+            if (preservedLimits != null && preservedLimits.Count > 0)
+            {
+                foreach (var r in _rows)
+                {
+                    if (preservedLimits.TryGetValue(r.CategoryID, out var lim))
+                    {
+                        r.MaxIncentiveAmount = lim.MaxAmt;
+                        r.MinIncentiveAmount = lim.MinAmt;
+                    }
+                }
+            }
+
             foreach (var r in _rows)
             {
                 r.OnRowAmountsChanged = UpdateLiveGrandTotalsKpi;
             }
 
-            if (_rows.Count > 0)
+            if (preservedLimits == null)
             {
-                TxtQuickMax.Text = _rows[0].MaxIncentiveText;
-                TxtQuickMin.Text = _rows[0].MinIncentiveText;
-            }
-            else
-            {
-                TxtQuickMax.Text = "0";
-                TxtQuickMin.Text = "0";
+                if (_rows.Count > 0)
+                {
+                    TxtQuickMax.Text = _rows[0].MaxIncentiveText;
+                    TxtQuickMin.Text = _rows[0].MinIncentiveText;
+                }
+                else
+                {
+                    TxtQuickMax.Text = "0";
+                    TxtQuickMin.Text = "0";
+                }
             }
 
+            GridCategoryIncentives.ItemsSource = null;
             GridCategoryIncentives.ItemsSource = _rows;
+
+            if (selectCategoryId.HasValue && selectCategoryId.Value > 0)
+            {
+                var match = _rows.FirstOrDefault(r => r.CategoryID == selectCategoryId.Value);
+                if (match != null)
+                {
+                    GridCategoryIncentives.SelectedItem = match;
+                    GridCategoryIncentives.ScrollIntoView(match);
+                }
+            }
+
             UpdateLiveGrandTotalsKpi();
             UpdateCopyPasteButtonsState();
         }
@@ -243,6 +281,59 @@ namespace SchoolEvaluationERP.Views
                 MessageBoxImage.Information);
         }
 
+        private async void BtnAllocateCategoryWeights_Click(object sender, RoutedEventArgs e)
+        {
+            if (!CanAllocateCategoryWeights)
+            {
+                MessageBox.Show("عذراً، لا تملك صلاحية تعديل توزيع درجات المقيمين في (1. صفحة الأساسيات).", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (CmbYear.SelectedItem is not int year || CmbMonth.SelectedValue is not int month)
+            {
+                MessageBox.Show("يرجى اختيار السنة والشهر أولاً.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            GridCategoryIncentives.CommitEdit(DataGridEditingUnit.Cell, true);
+            GridCategoryIncentives.CommitEdit(DataGridEditingUnit.Row, true);
+
+            BtnAllocateCategoryWeights.IsEnabled = false;
+            try
+            {
+                var groups = await _masterDataService.GetEvaluatorGroupsAsync();
+                if (groups.Count == 0)
+                {
+                    MessageBox.Show("يرجى أولاً إضافة مجموعة مقيمين واحدة على الأقل في (1. صفحة الأساسيات) قبل تخصيص الدرجات للفئات.", "تنبيه خطوة سابقة", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+
+                int initialCatId = (GridCategoryIncentives.SelectedItems.Cast<CategoryIncentiveSettingRow>().LastOrDefault()
+                                    ?? GridCategoryIncentives.SelectedItem as CategoryIncentiveSettingRow)?.CategoryID ?? 0;
+
+                var unsavedLimitsSnapshot = _rows?.ToDictionary(
+                    r => r.CategoryID,
+                    r => (MaxAmt: r.MaxIncentiveAmount, MinAmt: r.MinIncentiveAmount));
+
+                var dlg = new CategoryDialog(initialCatId, year, month)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                dlg.ShowDialog();
+
+                if (dlg.HasSavedChanges)
+                {
+                    await LoadCategoryIncentiveRowsAsync(
+                        preservedLimits: unsavedLimitsSnapshot,
+                        selectCategoryId: initialCatId);
+                }
+            }
+            finally
+            {
+                BtnAllocateCategoryWeights.IsEnabled = true;
+            }
+        }
+
         private bool TryReadQuickLimits(out decimal maxVal, out decimal minVal)
         {
             maxVal = 0m;
@@ -337,6 +428,11 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
 
 
 

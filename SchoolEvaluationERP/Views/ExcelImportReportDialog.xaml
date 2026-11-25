@@ -1,0 +1,169 @@
+﻿<Window x:Class="SchoolEvaluationERP.Views.ExcelImportReportDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="تقرير استيراد التقييمات من Excel"
+        Width="820" Height="600"
+        MinWidth="680" MinHeight="480"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource AppBgBrush}"
+        FlowDirection="RightToLeft"
+        FontFamily="Segoe UI">
+
+    <Grid Margin="16">
+        <Border Style="{StaticResource CardStyle}" Padding="18">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 0: العنوان وحالة الاستيراد -->
+                <Border Grid.Row="0" x:Name="BannerStatus" Background="#ECFDF5" BorderBrush="#6EE7B7" BorderThickness="1" CornerRadius="8" Padding="14,10" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock x:Name="TxtReportTitle"
+                                   Text="✔ اكتمل استيراد التقييمات من ملف الإكسل"
+                                   FontSize="16.5" FontWeight="Bold" Foreground="#065F46" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="TxtReportSubtitle"
+                                   Text=""
+                                   FontSize="12.5" Foreground="#047857" TextWrapping="Wrap" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 1: بطاقات الملخص الرقمي -->
+                <Grid Grid.Row="1" Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="8"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="8" Padding="10,8">
+                        <StackPanel>
+                            <TextBlock Text="تم سحب درجاتهم" FontSize="11.5" Foreground="#047857" FontWeight="SemiBold"/>
+                            <TextBlock x:Name="TxtKpiImported" Text="0 موظف" FontSize="17" FontWeight="Bold" Foreground="#065F46" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="2" x:Name="CardMissingInExcel" Background="#FFFBEB" BorderBrush="#FDE68A" BorderThickness="1" CornerRadius="8" Padding="10,8">
+                        <StackPanel>
+                            <TextBlock Text="في النظام وغير موجود بالإكسل" FontSize="11" Foreground="#92400E" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="TxtKpiMissingInExcel" Text="0 موظف" FontSize="17" FontWeight="Bold" Foreground="#B45309" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="4" x:Name="CardExtraInExcel" Background="#FEF2F2" BorderBrush="#FECACA" BorderThickness="1" CornerRadius="8" Padding="10,8">
+                        <StackPanel>
+                            <TextBlock Text="في الإكسل وغير موجود بالنظام" FontSize="11" Foreground="#991B1B" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="TxtKpiExtraInExcel" Text="0 موظف" FontSize="17" FontWeight="Bold" Foreground="#B91C1C" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Grid.Column="6" x:Name="CardStructureWarnings" Background="#EFF6FF" BorderBrush="#BFDBFE" BorderThickness="1" CornerRadius="8" Padding="10,8">
+                        <StackPanel>
+                            <TextBlock Text="تنبيهات الأوراق والأعمدة" FontSize="11" Foreground="#1E40AF" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="TxtKpiStructureWarnings" Text="0 تنبيه" FontSize="17" FontWeight="Bold" Foreground="#1E3A8A" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- 2: التبويبات التفصيلية القابلة للتمرير -->
+                <TabControl Grid.Row="2" x:Name="TabReportDetails" Background="Transparent" BorderThickness="1" BorderBrush="#CBD5E1" FontSize="13">
+                    <TabItem x:Name="TabSummary" Header="📋 الملخص الكامل" Padding="12,6" FontWeight="Bold">
+                        <TextBox x:Name="TxtFullReportText"
+                                 IsReadOnly="True"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Disabled"
+                                 BorderThickness="0"
+                                 Background="#F8FAFC"
+                                 Foreground="#0F172A"
+                                 FontSize="13"
+                                 FontWeight="Normal"
+                                 Padding="12"/>
+                    </TabItem>
+
+                    <TabItem x:Name="TabMissingInExcel" Header="⚠ غير موجودين في الإكسل (0)" Padding="12,6" FontWeight="Bold">
+                        <DataGrid x:Name="GridMissingInExcel"
+                                  AutoGenerateColumns="False"
+                                  IsReadOnly="True"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Margin="4">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="الورقة" Binding="{Binding SheetName}" Width="170" MinWidth="130"/>
+                                <DataGridTextColumn Header="الاسم التقييمي (في النظام)" Binding="{Binding ItemName}" Width="*" MinWidth="220"/>
+                                <DataGridTextColumn Header="ملاحظة / تفاصيل" Binding="{Binding Details}" Width="220" MinWidth="160"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+
+                    <TabItem x:Name="TabExtraInExcel" Header="⚠ غير موجودين في النظام (0)" Padding="12,6" FontWeight="Bold">
+                        <DataGrid x:Name="GridExtraInExcel"
+                                  AutoGenerateColumns="False"
+                                  IsReadOnly="True"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Margin="4">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="الورقة (في الإكسل)" Binding="{Binding SheetName}" Width="170" MinWidth="130"/>
+                                <DataGridTextColumn Header="الاسم في الإكسل" Binding="{Binding ItemName}" Width="*" MinWidth="220"/>
+                                <DataGridTextColumn Header="التفاصيل" Binding="{Binding Details}" Width="230" MinWidth="170"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+
+                    <TabItem x:Name="TabStructureWarnings" Header="📑 الأوراق والأعمدة (0)" Padding="12,6" FontWeight="Bold">
+                        <DataGrid x:Name="GridStructureWarnings"
+                                  AutoGenerateColumns="False"
+                                  IsReadOnly="True"
+                                  CanUserAddRows="False"
+                                  CanUserDeleteRows="False"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Auto"
+                                  Margin="4">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="الورقة" Binding="{Binding SheetName}" Width="180" MinWidth="140"/>
+                                <DataGridTextColumn Header="العنصر" Binding="{Binding ItemName}" Width="210" MinWidth="160"/>
+                                <DataGridTextColumn Header="التفاصيل" Binding="{Binding Details}" Width="*" MinWidth="220"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </TabItem>
+                </TabControl>
+
+                <!-- 3: أزرار النسخ والإغلاق -->
+                <Grid Grid.Row="3" Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button Grid.Column="0" x:Name="BtnCopyReport" Content="📋 نسخ التقرير بالكامل"
+                            Style="{StaticResource SecondaryButton}" Height="38" Padding="16,0" FontSize="13"
+                            Background="#EFF6FF" BorderBrush="#93C5FD" Foreground="#1E40AF" FontWeight="Bold"
+                            Click="BtnCopyReport_Click"/>
+
+                    <TextBlock Grid.Column="1" x:Name="TxtCopyFeedback"
+                               Text="" FontSize="12.5" FontWeight="Bold" Foreground="#047857"
+                               VerticalAlignment="Center" Margin="12,0"/>
+
+                    <Button Grid.Column="2" Content="✔ إغلاق ومراجعة الجدول"
+                            Style="{StaticResource PrimaryButton}" Height="38" Padding="20,0" FontSize="13"
+                            IsDefault="True" IsCancel="True"
+                            Click="BtnClose_Click"/>
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

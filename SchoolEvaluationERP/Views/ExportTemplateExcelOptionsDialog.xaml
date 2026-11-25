@@ -1,0 +1,45 @@
+﻿<Window x:Class="SchoolEvaluationERP.Views.ExportTemplateExcelOptionsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="استخراج قالب التقييم (Excel)"
+        Width="520" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="{StaticResource AppBgBrush}"
+        FlowDirection="RightToLeft"
+        FontFamily="Segoe UI">
+
+    <Grid Margin="18">
+        <Border Style="{StaticResource CardStyle}" Padding="20">
+            <StackPanel>
+                <TextBlock Text="📗 استخراج قالب التقييم بصيغة Excel"
+                           FontSize="17.5" FontWeight="Bold" Foreground="{StaticResource TextPrimaryBrush}"/>
+
+                <TextBlock x:Name="TxtPromptSubtitle"
+                           Text="اختر نطاق الاستخراج المطلوب للقالب:"
+                           FontSize="13" Foreground="{StaticResource TextSecondaryBrush}"
+                           TextWrapping="Wrap" Margin="0,6,0,14"/>
+
+                <Border Background="#ECFDF5" BorderBrush="#A7F3D0" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,14">
+                    <TextBlock Text="🔒 سيتم تصدير الملفات محمية بكلمة سر قوالب الإكسل المعتمدة (الأسماء والأكواد والمجموع مقفلة، وخلايا الدرجات فقط مفتوحة للإدخال مع التحقق التلقائي)."
+                               FontSize="12" FontWeight="SemiBold" Foreground="#065F46" TextWrapping="Wrap"/>
+                </Border>
+
+                <Button x:Name="BtnExportSelectedMonth"
+                        Content="📅 الشهر المحدد فقط"
+                        Style="{StaticResource PrimaryButton}" Height="42" FontSize="13.5" Margin="0,0,0,8"
+                        Click="BtnExportSelectedMonth_Click"/>
+
+                <Button x:Name="BtnExportAllMonths"
+                        Content="📁 جميع الشهور (12 شهراً داخل مجلد)"
+                        Style="{StaticResource SecondaryButton}" Height="42" FontSize="13.5" Margin="0,0,0,10"
+                        Background="#EFF6FF" BorderBrush="#3B82F6" Foreground="#1E3A8A" FontWeight="Bold"
+                        Click="BtnExportAllMonths_Click"/>
+
+                <Button Content="إلغاء"
+                        Style="{StaticResource SecondaryButton}" Height="36" FontSize="13" IsCancel="True"
+                        Click="BtnCancel_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -22,7 +23,84 @@ namespace SchoolEvaluationERP.Views
         private bool _isSuppressingSelectionEvents;
         private bool _isReadOnlyMode;
         private bool _isHorizontalAdvance = true;
+        private bool _hasUnsavedChanges;
+        private TemplateSummaryDto? _lastLoadedTemplate;
+        private int? _lastLoadedYear;
+        private int? _lastLoadedMonth;
 
+        public bool HasUnsavedChanges => _hasUnsavedChanges && !_isReadOnlyMode;
+
+        public bool ConfirmDiscardUnsavedChanges(string actionLabel = "مغادرة الصفحة")
+        {
+            try
+            {
+                GridWeeklyScores.CommitEdit(DataGridEditingUnit.Cell, true);
+                GridWeeklyScores.CommitEdit(DataGridEditingUnit.Row, true);
+            }
+            catch { }
+
+            if (!HasUnsavedChanges) return true;
+
+            var choice = MessageBox.Show(
+                $"⚠ تنبيه: توجد درجات تقييم قمت بتعديلها ولم يتم حفظها بعد!\n\n" +
+                $"هل تريد تجاهل التعديلات غير المحفوظة والمتابعة ({actionLabel})؟\n" +
+                "• اضغط (لا) للبقاء والضغط على زر الحفظ أولاً.\n" +
+                "• اضغط (نعم) لتجاهل التعديلات والمتابعة.",
+                "تعديلات غير محفوظة",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (choice == MessageBoxResult.Yes)
+            {
+                _hasUnsavedChanges = false;
+                UpdateSaveButtonDirtyLabel();
+                return true;
+            }
+            return false;
+        }
+
+        private void MarkScoresDirty()
+        {
+            if (_isReadOnlyMode || _currentWorkspace == null) return;
+            if (!_hasUnsavedChanges)
+            {
+                _hasUnsavedChanges = true;
+                UpdateSaveButtonDirtyLabel();
+            }
+        }
+
+        private void UpdateSaveButtonDirtyLabel()
+        {
+            if (BtnSaveMonthlyEvaluation == null || _currentWorkspace == null) return;
+            bool isExisting = _currentWorkspace.RecordID > 0;
+            string baseText = isExisting
+                ? "💾 حفظ التعديلات على تقييم الشهر"
+                : "💾 حفظ واعتماد تقييم الشهر";
+            BtnSaveMonthlyEvaluation.Content = HasUnsavedChanges ? $"{baseText} *" : baseText;
+        }
+
+        private void AttachDirtyTrackingToWorkspace(WeeklyEvaluationWorkspaceModel workspace)
+        {
+            foreach (var sheet in workspace.Sheets)
+            {
+                foreach (var emp in sheet.EmployeeRows)
+                {
+                    emp.PropertyChanged -= ScoreRow_PropertyChanged;
+                    emp.PropertyChanged += ScoreRow_PropertyChanged;
+                }
+            }
+        }
+
+        private void ScoreRow_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == "Item[]")
+            {
+                MarkScoresDirty();
+            }
+        }
+
+        private bool IsAdmin => AuthService.CurrentSession?.IsAdmin == true;
         private bool CanInsert => AuthService.CurrentSession?.HasPermission("ScoreEntry", "insert") == true;
         private bool CanUpdate => AuthService.CurrentSession?.HasPermission("ScoreEntry", "update") == true;
 
@@ -65,6 +143,7 @@ namespace SchoolEvaluationERP.Views
 
         private async Task InitializeSelectorsAsync()
         {
+            BtnImportBulkMultiMonthExcel.Visibility = IsAdmin ? Visibility.Visible : Visibility.Collapsed;
             _isSuppressingSelectionEvents = true;
 
             int currentYear = DateTime.Now.Year;
@@ -76,7 +155,7 @@ namespace SchoolEvaluationERP.Views
             CmbMonth.ItemsSource = months;
             CmbMonth.SelectedValue = DateTime.Now.Month;
 
-            var templates = await _service.GetActiveTemplatesForEntryAsync();
+            var templates = await _service.GetActiveTemplatesForEntryAsync(evalYear: currentYear, evalMonth: DateTime.Now.Month);
             CmbTemplate.ItemsSource = templates;
 
             _isSuppressingSelectionEvents = false;
@@ -93,6 +172,7 @@ namespace SchoolEvaluationERP.Views
 
         private void SetEmptyState(string message)
         {
+            _hasUnsavedChanges = false;
             _currentWorkspace = null;
             _activeSheet = null;
             TxtWorkspaceHeader.Text = message;
@@ -115,17 +195,33 @@ namespace SchoolEvaluationERP.Views
         private async void CmbTemplate_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isSuppressingSelectionEvents) return;
+            if (!ConfirmDiscardUnsavedChanges("تغيير المقيم / القالب"))
+            {
+                _isSuppressingSelectionEvents = true;
+                CmbTemplate.SelectedItem = _lastLoadedTemplate;
+                _isSuppressingSelectionEvents = false;
+                return;
+            }
             await LoadSelectedMonthWorkspaceAsync();
         }
 
         private async void PeriodFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isSuppressingSelectionEvents) return;
+            if (!ConfirmDiscardUnsavedChanges("تغيير السنة أو الشهر"))
+            {
+                _isSuppressingSelectionEvents = true;
+                if (_lastLoadedYear.HasValue) CmbYear.SelectedItem = _lastLoadedYear.Value;
+                if (_lastLoadedMonth.HasValue) CmbMonth.SelectedValue = _lastLoadedMonth.Value;
+                _isSuppressingSelectionEvents = false;
+                return;
+            }
             await LoadSelectedMonthWorkspaceAsync();
         }
 
         private async void BtnReloadWorkspace_Click(object sender, RoutedEventArgs e)
         {
+            if (!ConfirmDiscardUnsavedChanges("تحديث الاستمارة")) return;
             await LoadSelectedMonthWorkspaceAsync();
         }
 
@@ -142,7 +238,7 @@ namespace SchoolEvaluationERP.Views
 
             if (monthStatus.IsAlreadyEntered && monthStatus.ExistingRecordId.HasValue)
             {
-                _currentWorkspace = await _service.LoadSavedRecordWorkspaceAsync(monthStatus.ExistingRecordId.Value);
+                _currentWorkspace = await _service.LoadSavedRecordWorkspaceAsync(monthStatus.ExistingRecordId.Value, enforceAssignedUserScope: true);
                 _isReadOnlyMode = true;
             }
             else
@@ -156,6 +252,12 @@ namespace SchoolEvaluationERP.Views
                 SetEmptyState("تعذر تحميل أوراق هذا القالب. تأكد من احتواء القالب على ورقة عمل واحدة وموظفين مستمرين.");
                 return;
             }
+
+            _hasUnsavedChanges = false;
+            _lastLoadedTemplate = selectedTemplate;
+            _lastLoadedYear = year;
+            _lastLoadedMonth = month;
+            AttachDirtyTrackingToWorkspace(_currentWorkspace);
 
             ActivateSheet(_currentWorkspace.Sheets[0]);
         }
@@ -436,6 +538,12 @@ namespace SchoolEvaluationERP.Views
                 GridWeeklyScores.ScrollIntoView(newlyAddedRowsOnFirstSheet[0]);
             }
 
+            if (addedCount > 0 || removedCount > 0)
+            {
+                AttachDirtyTrackingToWorkspace(_currentWorkspace);
+                MarkScoresDirty();
+            }
+
             TxtWorkspaceHint.Text =
                 $"⚠ تم تطبيق المزامنة على الجدول (إضافة {addedCount} موظف | إزالة {removedCount} موظف) — راجع/أدخل الدرجات ثم اضغط (💾 حفظ التعديلات على تقييم الشهر) لاعتماد التغيير نهائياً.";
             TxtWorkspaceHint.Foreground = new SolidColorBrush(Color.FromRgb(180, 83, 9));
@@ -592,21 +700,6 @@ namespace SchoolEvaluationERP.Views
                 MinWidth = 95
             });
 
-            var weightedStyle = new Style(typeof(TextBlock));
-            weightedStyle.Setters.Add(new Setter(TextBlock.TextAlignmentProperty, TextAlignment.Center));
-            weightedStyle.Setters.Add(new Setter(TextBlock.VerticalAlignmentProperty, VerticalAlignment.Center));
-            weightedStyle.Setters.Add(new Setter(TextBlock.FontWeightProperty, FontWeights.Bold));
-            weightedStyle.Setters.Add(new Setter(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(15, 23, 42))));
-
-            GridWeeklyScores.Columns.Add(new DataGridTextColumn
-            {
-                Header = "حصة المقيم\nالموزونة",
-                Binding = new Binding("WeightedScoreDisplay"),
-                ElementStyle = weightedStyle,
-                IsReadOnly = true,
-                Width = 115,
-                MinWidth = 105
-            });
 
             GridWeeklyScores.ItemsSource = null;
             GridWeeklyScores.ItemsSource = _activeSheet.EmployeeRows;
@@ -843,6 +936,12 @@ namespace SchoolEvaluationERP.Views
 
         private async void BtnImportBulkMultiMonthExcel_Click(object sender, RoutedEventArgs e)
         {
+            if (!IsAdmin)
+            {
+                MessageBox.Show("عذراً، ميزة سحب التقييمات المجمعة لجميع المقيمين مخصصة لمدير النظام فقط.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             if (!CanInsert && !CanUpdate)
             {
                 MessageBox.Show("عذراً، لا تملك صلاحية إضافة أو تعديل درجات التقييم.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -876,12 +975,24 @@ namespace SchoolEvaluationERP.Views
 
                 if (isSuccess)
                 {
+                    _hasUnsavedChanges = false;
                     await LoadSelectedMonthWorkspaceAsync();
                 }
             }
         }
 
-        private void BtnImportScoresExcel_Click(object sender, RoutedEventArgs e)
+        private void SetImportLoadingOverlay(bool isVisible, string? title = null, string? subtitle = null)
+        {
+            if (ImportLoadingOverlay == null) return;
+            if (!string.IsNullOrWhiteSpace(title) && TxtImportLoadingTitle != null)
+                TxtImportLoadingTitle.Text = title;
+            if (!string.IsNullOrWhiteSpace(subtitle) && TxtImportLoadingSubtitle != null)
+                TxtImportLoadingSubtitle.Text = subtitle;
+
+            ImportLoadingOverlay.Visibility = isVisible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async void BtnImportScoresExcel_Click(object sender, RoutedEventArgs e)
         {
             if (_currentWorkspace == null || _isReadOnlyMode) return;
 
@@ -891,20 +1002,103 @@ namespace SchoolEvaluationERP.Views
                 Filter = "Excel Workbook (*.xlsx)|*.xlsx"
             };
 
-            if (ofd.ShowDialog() == true)
-            {
-                var (isSuccess, message) = TemplateExcelExportService.ImportScoresIntoWorkspace(_currentWorkspace, ofd.FileName);
-                GridWeeklyScores.Items.Refresh();
-                UpdateSheetAverageBadge();
+            if (ofd.ShowDialog() != true)
+                return;
 
-                MessageBox.Show(
-                    message,
-                    isSuccess ? "استيراد الدرجات الشهرية من Excel" : "تنبيه الاستيراد",
-                    MessageBoxButton.OK,
-                    isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            string selectedPath = ofd.FileName;
+            var workspace = _currentWorkspace;
+
+            BtnImportScoresExcel.IsEnabled = false;
+            BtnSaveMonthlyEvaluation.IsEnabled = false;
+            SetImportLoadingOverlay(
+                true,
+                "جاري فحص بيانات ملف الإكسل...",
+                "يتم التحقق من اسم المقيم والشهر داخل الملف قبل بدء المطابقة.");
+
+            try
+            {
+                var (fileYear, fileMonth, rawPeriod, fileEvaluator) = await Task.Run(() =>
+                    TemplateExcelExportService.TryReadExcelTemplateMetadata(selectedPath));
+
+                var preWarnings = new List<string>();
+                if (!string.IsNullOrWhiteSpace(fileEvaluator) &&
+                    !TemplateExcelExportService.AreEvaluatorNamesEquivalent(fileEvaluator, workspace.EvaluatorName))
+                {
+                    preWarnings.Add(
+                        $"• اختلاف اسم المقيم:\n" +
+                        $"   - المقيم المسجل في الملف: ({fileEvaluator})\n" +
+                        $"   - المقيم المفتوح حالياً: ({workspace.EvaluatorName})");
+                }
+
+                if ((fileMonth.HasValue && fileMonth.Value != workspace.EvalMonth) ||
+                    (fileYear.HasValue && fileYear.Value != workspace.EvalYear))
+                {
+                    string wsMonthName = IncentiveCalculatorService.GetArabicMonthName(workspace.EvalMonth);
+                    string filePeriodDesc = fileMonth.HasValue
+                        ? $"شهر {IncentiveCalculatorService.GetArabicMonthName(fileMonth.Value)} {fileYear ?? workspace.EvalYear} م"
+                        : rawPeriod;
+                    preWarnings.Add(
+                        $"• اختلاف الشهر/السنة:\n" +
+                        $"   - الفترة المسجلة في الملف: ({filePeriodDesc})\n" +
+                        $"   - الفترة المفتوحة حالياً: (شهر {wsMonthName} {workspace.EvalYear} م)");
+                }
+
+                if (preWarnings.Count > 0)
+                {
+                    SetImportLoadingOverlay(false);
+                    var mismatchConfirm = MessageBox.Show(
+                        "⚠ تحذير قبل سحب التقييمات من ملف الإكسل:\n\n" +
+                        string.Join("\n\n", preWarnings) + "\n\n" +
+                        "هل أنت متأكد أنك تريد المتابعة ومحاولة سحب الدرجات من هذا الملف داخل الاستمارة المفتوحة حالياً؟",
+                        "تنبيه اختلاف بيانات قالب الإكسل",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning,
+                        MessageBoxResult.No);
+
+                    if (mismatchConfirm != MessageBoxResult.Yes)
+                        return;
+                }
+
+                SetImportLoadingOverlay(
+                    true,
+                    "جاري استيراد ومطابقة التقييمات من Excel...",
+                    "يتم مطابقة أسماء الأوراق، وأعمدة مبادئ التقييم (الصف 4)، وأسماء الموظفين حرفياً...");
+
+                var importResult = await Task.Run(() =>
+                    TemplateExcelExportService.ParseAndMatchExcelScores(workspace, selectedPath));
+
+                if (importResult.IsSuccess && importResult.PendingUpdates.Count > 0)
+                {
+                    TemplateExcelExportService.ApplyParsedImportUpdates(importResult);
+                    MarkScoresDirty();
+                    GridWeeklyScores.Items.Refresh();
+                    UpdateSheetAverageBadge();
+                }
+
+                SetImportLoadingOverlay(false);
+
+                var reportDlg = new ExcelImportReportDialog(
+                    importResult,
+                    workspace.EvaluatorName,
+                    workspace.EvalYear,
+                    workspace.EvalMonth)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+                reportDlg.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                SetImportLoadingOverlay(false);
+                MessageBox.Show($"حدث خطأ أثناء استيراد ملف الإكسل:\n{ex.Message}", "خطأ استيراد", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                SetImportLoadingOverlay(false);
+                BtnImportScoresExcel.IsEnabled = !_isReadOnlyMode;
+                BtnSaveMonthlyEvaluation.IsEnabled = !_isReadOnlyMode;
             }
         }
-
         private void BtnFillFullMarksAll_Click(object sender, RoutedEventArgs e)
         {
             if (_activeSheet == null || _isReadOnlyMode) return;
@@ -942,12 +1136,23 @@ namespace SchoolEvaluationERP.Views
         {
             if (_activeSheet == null || _isReadOnlyMode) return;
 
-            var confirm = MessageBox.Show("هل تريد تصفير جميع الدرجات في الورقة الحالية إلى (0)؟", "تأكيد التصفير", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            GridWeeklyScores.CommitEdit(DataGridEditingUnit.Cell, true);
+            GridWeeklyScores.CommitEdit(DataGridEditingUnit.Row, true);
+
+            var confirm = MessageBox.Show(
+                $"هل أنت متأكد من إعادة تهيئة الورقة الحالية ({_activeSheet.SheetName})؟\n\n" +
+                "• سيتم مسح جميع الدرجات المدخلة في هذه الورقة وإعادتها فارغة لإدخالها من جديد.\n" +
+                "• لن يُعتمد هذا التغيير نهائياً في قاعدة البيانات إلا بعد الضغط على زر الحفظ.",
+                "تأكيد إعادة تهيئة الورقة",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
             if (confirm != MessageBoxResult.Yes) return;
 
             foreach (var emp in _activeSheet.EmployeeRows)
             {
-                emp.ClearMarksToZero();
+                emp.ClearMarksToEmpty();
             }
 
             GridWeeklyScores.Items.Refresh();
@@ -1022,9 +1227,18 @@ namespace SchoolEvaluationERP.Views
                 }
             }
 
+            bool isSuccess;
+            string message;
+            int savedRecordId;
             BtnSaveMonthlyEvaluation.IsEnabled = false;
-            var (isSuccess, message, savedRecordId) = await _service.SaveMonthlyEvaluationAsync(_currentWorkspace, "ScoreEntry");
-            BtnSaveMonthlyEvaluation.IsEnabled = true;
+            try
+            {
+                (isSuccess, message, savedRecordId) = await _service.SaveMonthlyEvaluationAsync(_currentWorkspace, "ScoreEntry");
+            }
+            finally
+            {
+                BtnSaveMonthlyEvaluation.IsEnabled = !_isReadOnlyMode;
+            }
 
             MessageBox.Show(
                 message,
@@ -1039,6 +1253,24 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

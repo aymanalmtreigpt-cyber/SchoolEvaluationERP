@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -26,11 +27,63 @@ namespace SchoolEvaluationERP.Views
         private bool _isReadOnlyViewMode = true;
         private bool _isInitializingPeriod;
         private int _searchRequestVersion;
+        private bool _hasUnsavedChanges;
+
+        public bool HasUnsavedChanges => _hasUnsavedChanges && IsCurrentDesignerEditable();
+
+        private void MarkTemplateDirty()
+        {
+            if (_currentTemplate == null || _currentTemplate.IsSystemTemplate || !IsCurrentDesignerEditable())
+                return;
+            if (!_hasUnsavedChanges)
+            {
+                _hasUnsavedChanges = true;
+                UpdateSaveTemplateDirtyLabel();
+            }
+        }
+
+        private void UpdateSaveTemplateDirtyLabel()
+        {
+            if (BtnDesignerSaveTemplate == null) return;
+            BtnDesignerSaveTemplate.Content = HasUnsavedChanges
+                ? "💾 حفظ واعتماد القالب بالكامل *"
+                : "💾 حفظ واعتماد القالب بالكامل";
+        }
+
+        public bool ConfirmDiscardUnsavedChanges(string actionLabel = "مغادرة الصفحة")
+        {
+            if (!HasUnsavedChanges) return true;
+
+            var choice = MessageBox.Show(
+                $"⚠ تنبيه: توجد تعديلات غير محفوظة على قالب التقييم الحالي!\n\n" +
+                $"هل تريد تجاهل التعديلات غير المحفوظة والمتابعة ({actionLabel})؟\n" +
+                "• اضغط (لا) للبقاء والضغط على (💾 حفظ واعتماد القالب بالكامل) أولاً.\n" +
+                "• اضغط (نعم) لتجاهل التعديلات والمتابعة.",
+                "تعديلات غير محفوظة على القالب",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (choice == MessageBoxResult.Yes)
+            {
+                _hasUnsavedChanges = false;
+                UpdateSaveTemplateDirtyLabel();
+                return true;
+            }
+            return false;
+        }
 
         // حافظة نسخ ولصق أعمدة مبادئ التقييم (مشتركة بين الأوراق وبين قوالب المقيمين)
         private static List<(string Title, decimal MaxScore)> _copiedCriteriaBuffer = new();
         private static string _copiedCriteriaSourceLabel = string.Empty;
         private bool _isSelectingCriteriaForCopy;
+        private bool _isClearingTemplateSearch;
+
+        public static void ClearCopiedCriteriaBuffer()
+        {
+            _copiedCriteriaBuffer.Clear();
+            _copiedCriteriaSourceLabel = string.Empty;
+        }
         private readonly HashSet<int> _selectedCriteriaIndicesForCopy = new();
 
         // حالة تحريك وإعادة ترتيب أعمدة مبادئ التقييم (بالضغط مرتين أو السحب المباشر بالماوس)
@@ -53,10 +106,17 @@ namespace SchoolEvaluationERP.Views
         private int? _hoverReorderSourceIndex;
         private int? _hoverReorderTargetIndex;
         private bool _hoverReorderIsSlot;
+        private bool _isExcelPasswordVisible;
+        private bool _isSyncingExcelPassword;
+
+        private int _lastSelectedPeriodYear = DateTime.Now.Year;
+        private int _lastSelectedPeriodMonth = DateTime.Now.Month;
+        private bool _isSelectedPeriodLocked;
 
         private int SelectedTemplateYear => CmbTemplatePreviewYear?.SelectedItem is int y ? y : DateTime.Now.Year;
         private int SelectedTemplateMonth => CmbTemplatePreviewMonth?.SelectedValue is int m ? m : DateTime.Now.Month;
 
+        private bool IsAdmin => AuthService.CurrentSession?.IsAdmin == true;
         private bool CanInsert => AuthService.CurrentSession?.HasPermission("Templates", "insert") == true;
         private bool CanUpdate => AuthService.CurrentSession?.HasPermission("Templates", "update") == true;
         private bool CanDelete => AuthService.CurrentSession?.HasPermission("Templates", "delete") == true;
@@ -70,6 +130,10 @@ namespace SchoolEvaluationERP.Views
             Loaded += async (_, _) =>
             {
                 ApplyPermissionsToControls();
+                if (IsAdmin)
+                {
+                    await LoadAdminExcelPasswordAsync();
+                }
                 await InitializeTemplatePeriodSelectorsAsync();
                 await RefreshSavedTemplatesGridAsync();
             };
@@ -77,9 +141,145 @@ namespace SchoolEvaluationERP.Views
 
         private void ApplyPermissionsToControls()
         {
-            BtnCreateNewTemplate.Visibility = CanInsert ? Visibility.Visible : Visibility.Collapsed;
+            BtnCreateNewTemplate.Visibility = IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+            BtnExportAllEvaluatorsEmployeesExcel.Visibility = IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+            BtnDesignerExportAllEvaluatorsExcel.Visibility = IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+            ColAssignedUsers.Visibility = IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+            PanelAdminExcelPassword.Visibility = IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+
             BtnOpenSelectedTemplate.Visibility = CanUpdate ? Visibility.Visible : Visibility.Collapsed;
             BtnDeleteSelectedTemplate.Visibility = CanDelete ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private async Task LoadAdminExcelPasswordAsync()
+        {
+            if (!IsAdmin) return;
+            try
+            {
+                string savedPwd = await _service.GetSavedExcelProtectionPasswordRawAsync();
+                _isSyncingExcelPassword = true;
+                PwdExcelTemplateProtection.Password = savedPwd;
+                TxtExcelTemplateProtectionVisible.Text = savedPwd;
+                _isSyncingExcelPassword = false;
+                UpdateExcelPasswordStatusHint(savedPwd);
+            }
+            catch { }
+        }
+
+        private string GetTypedExcelPassword()
+        {
+            return _isExcelPasswordVisible
+                ? (TxtExcelTemplateProtectionVisible.Text ?? string.Empty).Trim()
+                : (PwdExcelTemplateProtection.Password ?? string.Empty).Trim();
+        }
+
+        private void UpdateExcelPasswordStatusHint(string pwd, bool isUnsavedEdit = false)
+        {
+            bool hasPassword = !string.IsNullOrWhiteSpace(pwd);
+
+            if (PanelAdminExcelPassword != null)
+            {
+                PanelAdminExcelPassword.Background = hasPassword
+                    ? new SolidColorBrush(Color.FromRgb(236, 253, 245))
+                    : new SolidColorBrush(Color.FromRgb(255, 251, 235));
+                PanelAdminExcelPassword.BorderBrush = hasPassword
+                    ? new SolidColorBrush(Color.FromRgb(16, 185, 129))
+                    : new SolidColorBrush(Color.FromRgb(245, 158, 11));
+            }
+
+            var textBrush = hasPassword
+                ? new SolidColorBrush(Color.FromRgb(6, 95, 70))
+                : new SolidColorBrush(Color.FromRgb(146, 64, 14));
+
+            if (TxtExcelPasswordTitle != null)
+            {
+                TxtExcelPasswordTitle.Foreground = textBrush;
+            }
+
+            if (TxtExcelPasswordStatusHint != null)
+            {
+                TxtExcelPasswordStatusHint.Foreground = textBrush;
+                TxtExcelPasswordStatusHint.Text = !hasPassword
+                    ? "ℹ لم تُحدد كلمة سر مخصصة بعد (تُستخدم حماية افتراضية داخلية تلقائياً)."
+                    : isUnsavedEdit
+                        ? "✔ كلمة سر مدخلة (اضغط «💾 حفظ كلمة السر» لتثبيتها)."
+                        : "✔ كلمة السر مفعّلة لحماية جميع قوالب الإكسل المستخرجة.";
+            }
+        }
+
+        private void PwdExcelTemplateProtection_PasswordChanged(object sender, RoutedEventArgs e)
+        {
+            if (_isSyncingExcelPassword) return;
+            _isSyncingExcelPassword = true;
+            TxtExcelTemplateProtectionVisible.Text = PwdExcelTemplateProtection.Password;
+            _isSyncingExcelPassword = false;
+            UpdateExcelPasswordStatusHint(PwdExcelTemplateProtection.Password, isUnsavedEdit: true);
+        }
+
+        private void TxtExcelTemplateProtectionVisible_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_isSyncingExcelPassword) return;
+            _isSyncingExcelPassword = true;
+            PwdExcelTemplateProtection.Password = TxtExcelTemplateProtectionVisible.Text;
+            _isSyncingExcelPassword = false;
+            UpdateExcelPasswordStatusHint(TxtExcelTemplateProtectionVisible.Text, isUnsavedEdit: true);
+        }
+
+        private void BtnToggleExcelPasswordVisibility_Click(object sender, RoutedEventArgs e)
+        {
+            if (!IsAdmin) return;
+            _isExcelPasswordVisible = !_isExcelPasswordVisible;
+
+            if (_isExcelPasswordVisible)
+            {
+                _isSyncingExcelPassword = true;
+                TxtExcelTemplateProtectionVisible.Text = PwdExcelTemplateProtection.Password;
+                _isSyncingExcelPassword = false;
+                PwdExcelTemplateProtection.Visibility = Visibility.Collapsed;
+                TxtExcelTemplateProtectionVisible.Visibility = Visibility.Visible;
+                BtnToggleExcelPasswordVisibility.Content = "🙈 حجب";
+                TxtExcelTemplateProtectionVisible.Focus();
+                TxtExcelTemplateProtectionVisible.CaretIndex = TxtExcelTemplateProtectionVisible.Text.Length;
+            }
+            else
+            {
+                _isSyncingExcelPassword = true;
+                PwdExcelTemplateProtection.Password = TxtExcelTemplateProtectionVisible.Text;
+                _isSyncingExcelPassword = false;
+                TxtExcelTemplateProtectionVisible.Visibility = Visibility.Collapsed;
+                PwdExcelTemplateProtection.Visibility = Visibility.Visible;
+                BtnToggleExcelPasswordVisibility.Content = "👁 إظهار";
+                PwdExcelTemplateProtection.Focus();
+            }
+        }
+
+        private async void BtnSaveExcelPassword_Click(object sender, RoutedEventArgs e)
+        {
+            if (!IsAdmin) return;
+
+            string pwd = GetTypedExcelPassword();
+            bool isSuccess;
+            string message;
+            BtnSaveExcelPassword.IsEnabled = false;
+            try
+            {
+                (isSuccess, message) = await _service.SaveExcelProtectionPasswordAsync(pwd);
+            }
+            finally
+            {
+                BtnSaveExcelPassword.IsEnabled = true;
+            }
+
+            if (isSuccess)
+            {
+                UpdateExcelPasswordStatusHint(pwd);
+            }
+
+            MessageBox.Show(
+                message,
+                isSuccess ? "كلمة سر قوالب الإكسل" : "تنبيه",
+                MessageBoxButton.OK,
+                isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
 
         private Task InitializeTemplatePeriodSelectorsAsync()
@@ -96,6 +296,9 @@ namespace SchoolEvaluationERP.Views
             CmbTemplatePreviewMonth.ItemsSource = MonthOptionItem.GetAllMonths();
             CmbTemplatePreviewMonth.SelectedValue = currentMonth;
 
+            _lastSelectedPeriodYear = currentYear;
+            _lastSelectedPeriodMonth = currentMonth;
+
             _isInitializingPeriod = false;
             return Task.CompletedTask;
         }
@@ -103,11 +306,32 @@ namespace SchoolEvaluationERP.Views
         private async void TemplatePeriodFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isInitializingPeriod || !IsLoaded) return;
+
+            if (!ConfirmDiscardUnsavedChanges("تغيير السنة أو الشهر"))
+            {
+                _isInitializingPeriod = true;
+                CmbTemplatePreviewYear.SelectedItem = _lastSelectedPeriodYear;
+                CmbTemplatePreviewMonth.SelectedValue = _lastSelectedPeriodMonth;
+                _isInitializingPeriod = false;
+                return;
+            }
+
+            _lastSelectedPeriodYear = SelectedTemplateYear;
+            _lastSelectedPeriodMonth = SelectedTemplateMonth;
+
             await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
 
-            if (_currentTemplate != null && _currentTemplate.TemplateID > 0 && _isReadOnlyViewMode)
+            if (_currentTemplate != null && _currentTemplate.EvaluatorID > 0)
             {
-                await LoadTemplateIntoDesignerAsync(_currentTemplate.TemplateID, openInReadOnlyMode: true, switchToDesignerTab: false);
+                int resolvedId = await _service.ResolveTemplateIdForEvaluatorInMonthAsync(
+                    _currentTemplate.EvaluatorID,
+                    SelectedTemplateYear,
+                    SelectedTemplateMonth);
+
+                if (resolvedId > 0)
+                {
+                    await LoadTemplateIntoDesignerAsync(resolvedId, openInReadOnlyMode: true, switchToDesignerTab: false);
+                }
             }
         }
 
@@ -116,13 +340,39 @@ namespace SchoolEvaluationERP.Views
             if (!IsLoaded) return;
             int requestVersion = ++_searchRequestVersion;
             string search = TxtSearchTemplateEvaluator.Text.Trim();
-            var list = await _service.GetCurrentTemplatesAsync(search, syncSystemTemplates, SelectedTemplateYear, SelectedTemplateMonth);
+            int y = SelectedTemplateYear;
+            int m = SelectedTemplateMonth;
+
+            var periodStatus = await _service.GetTemplatesPeriodStatusAsync(y, m);
+            var list = await _service.GetCurrentTemplatesAsync(search, syncSystemTemplates, y, m);
             if (requestVersion != _searchRequestVersion)
                 return;
 
+            _isSelectedPeriodLocked = periodStatus.IsMonthLocked;
+            TxtTemplatesPeriodStatus.Text = periodStatus.StatusBadgeText;
+
+            if (periodStatus.IsMonthLocked)
+            {
+                BadgeTemplatesPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(254, 242, 242));
+                BadgeTemplatesPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(254, 202, 202));
+                TxtTemplatesPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28));
+            }
+            else if (periodStatus.StatusBadgeText.StartsWith("✔"))
+            {
+                BadgeTemplatesPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(236, 253, 245));
+                BadgeTemplatesPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(167, 243, 208));
+                TxtTemplatesPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(4, 120, 87));
+            }
+            else
+            {
+                BadgeTemplatesPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(239, 246, 255));
+                BadgeTemplatesPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(191, 219, 254));
+                TxtTemplatesPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175));
+            }
+
             GridSavedTemplates.ItemsSource = list;
-            string mName = IncentiveCalculatorService.GetArabicMonthName(SelectedTemplateMonth);
-            TxtTemplatesCountBadge.Text = $"إجمالي القوالب الفعالة ({mName} {SelectedTemplateYear}): {list.Count}";
+            string mName = IncentiveCalculatorService.GetArabicMonthName(m);
+            TxtTemplatesCountBadge.Text = $"إجمالي القوالب الفعالة ({mName} {y}): {list.Count}";
         }
 
         private async void TxtSearchTemplateEvaluator_TextChanged(object sender, TextChangedEventArgs e)
@@ -144,7 +394,7 @@ namespace SchoolEvaluationERP.Views
 
         private async void GridSavedTemplates_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (MainTemplatesTabControl.SelectedItem == TabTemplateDesigner && !_isReadOnlyViewMode)
+            if (!_isReadOnlyViewMode && (MainTemplatesTabControl.SelectedItem == TabTemplateDesigner || HasUnsavedChanges))
                 return;
 
             if (GridSavedTemplates.SelectedItem is TemplateSummaryDto selected)
@@ -157,6 +407,7 @@ namespace SchoolEvaluationERP.Views
         {
             if (GridSavedTemplates.SelectedItem is TemplateSummaryDto selected)
             {
+                if (!ConfirmDiscardUnsavedChanges("فتح قالب آخر")) return;
                 await LoadTemplateIntoDesignerAsync(selected.TemplateID, openInReadOnlyMode: true, switchToDesignerTab: true);
             }
         }
@@ -175,6 +426,20 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
+            if (_isSelectedPeriodLocked || selected.IsPeriodMonthLocked)
+            {
+                string lockName = $"{IncentiveCalculatorService.GetArabicMonthName(SelectedTemplateMonth)} {SelectedTemplateYear} م";
+                MessageBox.Show(
+                    $"شهر ({lockName}) معتمد ومغلق نهائياً ولا يمكن تعديل قوالبه.\nسيتم فتح القالب بوضع القراءة فقط.",
+                    "شهر مغلق — قراءة فقط",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                if (!ConfirmDiscardUnsavedChanges("فتح قالب آخر")) return;
+                await LoadTemplateIntoDesignerAsync(selected.TemplateID, openInReadOnlyMode: true, switchToDesignerTab: true);
+                return;
+            }
+
+            if (!ConfirmDiscardUnsavedChanges("فتح قالب آخر للتعديل")) return;
             await LoadTemplateIntoDesignerAsync(selected.TemplateID, openInReadOnlyMode: false, switchToDesignerTab: true);
         }
 
@@ -187,9 +452,11 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
+            _hasUnsavedChanges = false;
             _currentTemplate = fullModel;
             if (TxtSearchTemplateEmployees != null) TxtSearchTemplateEmployees.Text = string.Empty;
             _isReadOnlyViewMode = openInReadOnlyMode;
+            UpdateSaveTemplateDirtyLabel();
 
             if (switchToDesignerTab)
             {
@@ -204,9 +471,10 @@ namespace SchoolEvaluationERP.Views
 
         private async void BtnCreateNewTemplate_Click(object sender, RoutedEventArgs e)
         {
-            if (!CanInsert)
+            if (!ConfirmDiscardUnsavedChanges("إنشاء قالب جديد")) return;
+            if (!IsAdmin)
             {
-                MessageBox.Show("عذراً، لا تملك صلاحية (إضافة وكتابة) لإنشاء قالب تقييم جديد.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("عذراً، إنشاء قوالب التقييم الجديدة مخصص لمدير النظام فقط.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
@@ -236,6 +504,12 @@ namespace SchoolEvaluationERP.Views
 
             if (chosenEvaluator.HasExistingTemplate)
             {
+                if (evalDlg.AssignedUsersModified)
+                {
+                    await _service.SaveTemplateAssignedUsersAsync(chosenEvaluator.EvaluatorID, evalDlg.SelectedAssignedUserIds);
+                    await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
+                }
+
                 MessageBox.Show(
                     $"المقيم ({chosenEvaluator.EvaluatorName}) لديه قالب تقييم فعّال مسبقاً.\nسيتم فتح قالبه مباشرة في وضع التعديل مع تحديث الأوراق والموظفين تلقائياً.",
                     "فتح القالب الموجود",
@@ -264,6 +538,11 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
+            if (evalDlg.SelectedAssignedUserIds.Count > 0)
+            {
+                await _service.SaveTemplateAssignedUsersAsync(chosenEvaluator.EvaluatorID, evalDlg.SelectedAssignedUserIds);
+            }
+
             int totalAutoEmps = autoTemplate.Sheets.Sum(s => s.EmployeeRows.Count);
             await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
             await LoadTemplateIntoDesignerAsync(savedId, openInReadOnlyMode: false, switchToDesignerTab: true);
@@ -280,8 +559,36 @@ namespace SchoolEvaluationERP.Views
         }
 
 
+        private async void BtnAssignTemplateUsers_Click(object sender, RoutedEventArgs e)
+        {
+            if (!IsAdmin)
+            {
+                MessageBox.Show("عذراً، تحديد المستخدمين المسؤولين عن القوالب مخصص لمدير النظام فقط.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (sender is Button btn && btn.DataContext is TemplateSummaryDto rowDto)
+            {
+                var dlg = new AssignTemplateUsersDialog(rowDto.EvaluatorID, rowDto.EvaluatorWithGroupDisplay)
+                {
+                    Owner = Window.GetWindow(this)
+                };
+
+                if (dlg.ShowDialog() == true)
+                {
+                    await RefreshSavedTemplatesGridAsync(syncSystemTemplates: false);
+                }
+            }
+        }
+
         private async void BtnExportAllEvaluatorsEmployeesExcel_Click(object sender, RoutedEventArgs e)
         {
+            if (!IsAdmin)
+            {
+                MessageBox.Show("عذراً، استخراج كشف موظفي جميع المقيمين مخصص لمدير النظام فقط.", "تنبيه صلاحيات", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             try
             {
                 var evaluatorSheets = await _service.GetAllEvaluatorsWithAssignedEmployeesAsync(SelectedTemplateYear, SelectedTemplateMonth);
@@ -341,11 +648,11 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            var fullModel = await _service.GetTemplateFullDetailsAsync(selected.TemplateID, SelectedTemplateYear, SelectedTemplateMonth);
-            if (fullModel != null)
-            {
-                ExportTemplateToExcelWithDialog(fullModel);
-            }
+            await PromptAndExportTemplateExcelAsync(
+                evaluatorId: selected.EvaluatorID,
+                evaluatorName: selected.EvaluatorName,
+                fallbackTemplateId: selected.TemplateID,
+                preloadedSelectedMonthModel: null);
         }
 
         private async void BtnDeleteSelectedTemplate_Click(object sender, RoutedEventArgs e)
@@ -391,9 +698,11 @@ namespace SchoolEvaluationERP.Views
 
         private void ResetDesignerToEmpty()
         {
+            _hasUnsavedChanges = false;
             _currentTemplate = null;
             _activeSheet = null;
             _isReadOnlyViewMode = true;
+            UpdateSaveTemplateDirtyLabel();
             _isSelectingCriteriaForCopy = false;
             _selectedCriteriaIndicesForCopy.Clear();
             _movingCriteriaSourceIndex = null;
@@ -406,6 +715,7 @@ namespace SchoolEvaluationERP.Views
             TxtDesignerHeaderTitle.Text = "لم يتم فتح قالب بعد — اختر قالباً من القائمة أو أنشئ قالباً جديداً";
             BadgeSheetCategory.Visibility = Visibility.Collapsed;
             BadgeReadOnlyMode.Visibility = Visibility.Collapsed;
+            if (BadgeDesignerPeriodStatus != null) BadgeDesignerPeriodStatus.Visibility = Visibility.Collapsed;
             PanelCriteriaDesigner.IsEnabled = false;
             PanelEmployeeAdder.IsEnabled = false;
             if (TxtSearchTemplateEmployees != null) TxtSearchTemplateEmployees.Text = string.Empty;
@@ -436,8 +746,12 @@ namespace SchoolEvaluationERP.Views
             BannerCriteriaCopyMode.Visibility = Visibility.Collapsed;
             BannerCriteriaMoveMode.Visibility = Visibility.Collapsed;
 
+            bool isMonthLocked = _currentTemplate.IsMonthLocked;
+            if (isMonthLocked)
+                _isReadOnlyViewMode = true;
+
             bool hasRolePermission = (_currentTemplate.TemplateID == 0) ? CanInsert : CanUpdate;
-            bool canEditNow = !_isReadOnlyViewMode && hasRolePermission;
+            bool canEditNow = !_isReadOnlyViewMode && hasRolePermission && !isMonthLocked;
 
             PanelCriteriaDesigner.IsEnabled = true;
             UpdateCriteriaCopyPasteVisualState(canEditNow);
@@ -451,10 +765,44 @@ namespace SchoolEvaluationERP.Views
             BtnDesignerSaveTemplate.IsEnabled = canEditNow;
             BtnDesignerSaveTemplate.Visibility = canEditNow ? Visibility.Visible : Visibility.Collapsed;
             BtnDesignerExportExcel.IsEnabled = true;
-            BtnSwitchToEditMode.Visibility = (!canEditNow && hasRolePermission) ? Visibility.Visible : Visibility.Collapsed;
-            TxtReadOnlyBadge.Text = hasRolePermission
-                ? "🔒 وضع القراءة فقط (اضغط على «✏ الانتقال إلى وضع التعديل» لتعديل القالب)"
-                : "🔒 وضع القراءة فقط (لا تملك صلاحية تعديل القوالب)";
+            BtnSwitchToEditMode.Visibility = (!canEditNow && hasRolePermission && !isMonthLocked) ? Visibility.Visible : Visibility.Collapsed;
+            TxtReadOnlyBadge.Text = isMonthLocked
+                ? "🔒 شهر معتمد ومغلق نهائياً — القالب للقراءة فقط"
+                : (hasRolePermission
+                    ? "🔒 وضع القراءة فقط (اضغط على «✏ الانتقال إلى وضع التعديل» لتعديل القالب)"
+                    : "🔒 وضع القراءة فقط (لا تملك صلاحية تعديل القوالب)");
+
+            if (BadgeDesignerPeriodStatus != null && TxtDesignerPeriodStatus != null)
+            {
+                string statusText = _currentTemplate.MonthlyTemplateStatusText;
+                if (!string.IsNullOrWhiteSpace(statusText))
+                {
+                    TxtDesignerPeriodStatus.Text = statusText;
+                    BadgeDesignerPeriodStatus.Visibility = Visibility.Visible;
+                    if (isMonthLocked)
+                    {
+                        BadgeDesignerPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(254, 242, 242));
+                        BadgeDesignerPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(254, 202, 202));
+                        TxtDesignerPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(185, 28, 28));
+                    }
+                    else if (_currentTemplate.IsOwnMonthVersion)
+                    {
+                        BadgeDesignerPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(236, 253, 245));
+                        BadgeDesignerPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(167, 243, 208));
+                        TxtDesignerPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(4, 120, 87));
+                    }
+                    else
+                    {
+                        BadgeDesignerPeriodStatus.Background = new SolidColorBrush(Color.FromRgb(239, 246, 255));
+                        BadgeDesignerPeriodStatus.BorderBrush = new SolidColorBrush(Color.FromRgb(191, 219, 254));
+                        TxtDesignerPeriodStatus.Foreground = new SolidColorBrush(Color.FromRgb(30, 64, 175));
+                    }
+                }
+                else
+                {
+                    BadgeDesignerPeriodStatus.Visibility = Visibility.Collapsed;
+                }
+            }
 
             BadgeReadOnlyMode.Visibility = canEditNow ? Visibility.Collapsed : Visibility.Visible;
 
@@ -705,7 +1053,7 @@ namespace SchoolEvaluationERP.Views
 
         private bool IsCurrentDesignerEditable()
         {
-            if (_currentTemplate == null) return false;
+            if (_currentTemplate == null || _currentTemplate.IsMonthLocked) return false;
             bool hasRolePermission = (_currentTemplate.TemplateID == 0) ? CanInsert : CanUpdate;
             return !_isReadOnlyViewMode && hasRolePermission;
         }
@@ -913,6 +1261,7 @@ namespace SchoolEvaluationERP.Views
 
             _activeSheet.ReindexOrders();
             _activeSheet.NotifyTotalsChanged();
+            MarkTemplateDirty();
 
             RebuildInteractiveCriteriaStrip(true);
             RebuildPreviewDataGrid(true);
@@ -1392,6 +1741,7 @@ namespace SchoolEvaluationERP.Views
             {
                 _activeSheet.CriteriaColumns.Move(sourceIndex, finalIndex);
                 _activeSheet.ReindexOrders();
+                MarkTemplateDirty();
             }
 
             bool canEditNow = IsCurrentDesignerEditable();
@@ -1734,6 +2084,7 @@ namespace SchoolEvaluationERP.Views
                 };
 
                 _activeSheet.CriteriaColumns.Insert(insertAtIndex, newCol);
+                MarkTemplateDirty();
                 RebuildInteractiveCriteriaStrip(true);
                 RebuildPreviewDataGrid(true);
                 RebuildBottomSheetTabsBar();
@@ -1773,6 +2124,7 @@ namespace SchoolEvaluationERP.Views
                     targetCol.MaxScore = dlg.MaxScoreResult;
                 }
 
+                MarkTemplateDirty();
                 RebuildInteractiveCriteriaStrip(true);
                 RebuildPreviewDataGrid(true);
                 RebuildBottomSheetTabsBar();
@@ -1801,6 +2153,7 @@ namespace SchoolEvaluationERP.Views
                 }
             }
 
+            MarkTemplateDirty();
             RebuildInteractiveCriteriaStrip(true);
             RebuildPreviewDataGrid(true);
             RebuildBottomSheetTabsBar();
@@ -1844,6 +2197,7 @@ namespace SchoolEvaluationERP.Views
                 sheet.NotifyTotalsChanged();
             }
 
+            MarkTemplateDirty();
             RebuildBottomSheetTabsBar();
             MessageBox.Show(
                 $"✔ تم تعميم أعمدة التقييم بنجاح على جميع أوراق القالب ({_currentTemplate.Sheets.Count} ورقة).\nاضغط (💾 حفظ واعتماد القالب بالكامل) لاعتماد التغيير.",
@@ -1852,8 +2206,23 @@ namespace SchoolEvaluationERP.Views
                 MessageBoxImage.Information);
         }
 
+        private void ClearTemplateEmployeeSearchSilently()
+        {
+            if (TxtSearchTemplateEmployees != null && !string.IsNullOrEmpty(TxtSearchTemplateEmployees.Text))
+            {
+                _isClearingTemplateSearch = true;
+                TxtSearchTemplateEmployees.Text = string.Empty;
+                _isClearingTemplateSearch = false;
+            }
+            if (BtnClearTemplateEmployeeSearch != null)
+                BtnClearTemplateEmployeeSearch.Visibility = Visibility.Collapsed;
+            if (TxtTemplateSearchMatchCount != null)
+                TxtTemplateSearchMatchCount.Visibility = Visibility.Collapsed;
+        }
+
         private void RebuildPreviewDataGrid(bool canEditNow)
         {
+            ClearTemplateEmployeeSearchSilently();
             GridSheetPreview.Columns.Clear();
             _criteriaGridHeaderButtons.Clear();
             if (_activeSheet == null) return;
@@ -2063,12 +2432,20 @@ namespace SchoolEvaluationERP.Views
 
             empToAdd.RowOrder = _activeSheet.EmployeeRows.Count + 1;
             _activeSheet.EmployeeRows.Add(empToAdd);
+            MarkTemplateDirty();
 
             await SaveSystemTemplateChangesImmediatelyAsync();
 
             RefreshAvailableEmployeesCombo();
-            RebuildPreviewDataGrid(true);
-            RebuildBottomSheetTabsBar();
+            if (!string.IsNullOrWhiteSpace(TxtSearchTemplateEmployees?.Text))
+            {
+                ApplyDesignerEmployeeSearchFilter();
+            }
+            else
+            {
+                RebuildPreviewDataGrid(true);
+                RebuildBottomSheetTabsBar();
+            }
         }
 
         private async void BtnAddAllCategoryEmployees_Click(object sender, RoutedEventArgs e)
@@ -2092,12 +2469,20 @@ namespace SchoolEvaluationERP.Views
                 emp.RowOrder = _activeSheet.EmployeeRows.Count + 1;
                 _activeSheet.EmployeeRows.Add(emp);
             }
+            MarkTemplateDirty();
 
             await SaveSystemTemplateChangesImmediatelyAsync();
 
             RefreshAvailableEmployeesCombo();
-            RebuildPreviewDataGrid(true);
-            RebuildBottomSheetTabsBar();
+            if (!string.IsNullOrWhiteSpace(TxtSearchTemplateEmployees?.Text))
+            {
+                ApplyDesignerEmployeeSearchFilter();
+            }
+            else
+            {
+                RebuildPreviewDataGrid(true);
+                RebuildBottomSheetTabsBar();
+            }
         }
 
         private class CrossSheetDesignerEmployeeSearchRow
@@ -2258,6 +2643,7 @@ namespace SchoolEvaluationERP.Views
 
         private void TxtSearchTemplateEmployees_TextChanged(object sender, TextChangedEventArgs e)
         {
+            if (_isClearingTemplateSearch) return;
             ApplyDesignerEmployeeSearchFilter();
         }
 
@@ -2371,6 +2757,10 @@ namespace SchoolEvaluationERP.Views
             foreach (var sheet in affectedSheets)
             {
                 sheet.ReindexOrders();
+            }
+            if (affectedSheets.Count > 0)
+            {
+                MarkTemplateDirty();
             }
 
             await SaveSystemTemplateChangesImmediatelyAsync();
@@ -2495,6 +2885,7 @@ namespace SchoolEvaluationERP.Views
                 }
 
                 _currentTemplate.Sheets.Add(newSheet);
+                MarkTemplateDirty();
                 await ActivateSheetInDesignerAsync(newSheet);
             }
         }
@@ -2518,6 +2909,7 @@ namespace SchoolEvaluationERP.Views
             if (confirm != MessageBoxResult.Yes) return;
 
             _currentTemplate.Sheets.Remove(_activeSheet);
+            MarkTemplateDirty();
             await ActivateSheetInDesignerAsync(_currentTemplate.Sheets[0]);
         }
 
@@ -2525,14 +2917,25 @@ namespace SchoolEvaluationERP.Views
         {
             if (_currentTemplate == null || _isReadOnlyViewMode) return;
 
+            bool isSuccess;
+            string message;
+            int savedId;
             BtnDesignerSaveTemplate.IsEnabled = false;
-            var (isSuccess, message, savedId) = await _service.SaveTemplateAsync(_currentTemplate, SelectedTemplateYear, SelectedTemplateMonth);
-            BtnDesignerSaveTemplate.IsEnabled = true;
+            try
+            {
+                (isSuccess, message, savedId) = await _service.SaveTemplateAsync(_currentTemplate, SelectedTemplateYear, SelectedTemplateMonth);
+            }
+            finally
+            {
+                BtnDesignerSaveTemplate.IsEnabled = IsCurrentDesignerEditable();
+            }
 
             MessageBox.Show(message, isSuccess ? "تم حفظ القالب" : "تنبيه التحقق من شروط القالب", MessageBoxButton.OK, isSuccess ? MessageBoxImage.Information : MessageBoxImage.Warning);
 
             if (isSuccess && savedId > 0)
             {
+                _hasUnsavedChanges = false;
+                UpdateSaveTemplateDirtyLabel();
                 int? prevActiveCatId = _activeSheet?.TargetCategoryID;
                 string prevActiveSheetName = _activeSheet?.SheetName ?? string.Empty;
 
@@ -2555,15 +2958,26 @@ namespace SchoolEvaluationERP.Views
         }
 
 
-        private void BtnDesignerExportExcel_Click(object sender, RoutedEventArgs e)
+        private async void BtnDesignerExportExcel_Click(object sender, RoutedEventArgs e)
         {
             if (_currentTemplate == null) return;
-            ExportTemplateToExcelWithDialog(_currentTemplate);
+
+            await PromptAndExportTemplateExcelAsync(
+                evaluatorId: _currentTemplate.EvaluatorID,
+                evaluatorName: _currentTemplate.EvaluatorName,
+                fallbackTemplateId: _currentTemplate.TemplateID,
+                preloadedSelectedMonthModel: _currentTemplate);
         }
 
         private async void BtnSwitchToEditMode_Click(object sender, RoutedEventArgs e)
         {
             if (_currentTemplate == null) return;
+
+            if (_currentTemplate.IsMonthLocked)
+            {
+                MessageBox.Show("لا يمكن تعديل قالب هذا الشهر لأنه معتمد ومغلق نهائياً.", "شهر مغلق", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
 
             bool hasRolePermission = (_currentTemplate.TemplateID == 0) ? CanInsert : CanUpdate;
             if (!hasRolePermission)
@@ -2580,51 +2994,239 @@ namespace SchoolEvaluationERP.Views
             }
         }
 
-        private void ExportTemplateToExcelWithDialog(TemplateFullModel templateToExport)
+        private static string SanitizeFileNamePart(string rawName)
         {
-            if (templateToExport.Sheets.Count == 0)
+            string clean = (rawName ?? string.Empty).Trim();
+            foreach (char invalid in Path.GetInvalidFileNameChars())
             {
-                MessageBox.Show("لا توجد أوراق في القالب لاستخراجها.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                clean = clean.Replace(invalid, '-');
+            }
+            return string.IsNullOrWhiteSpace(clean) ? "مقيم" : clean;
+        }
+
+        private async Task<string> ResolveExcelProtectionPasswordForExportAsync()
+        {
+            if (IsAdmin)
+            {
+                string typed = GetTypedExcelPassword();
+                if (!string.IsNullOrWhiteSpace(typed))
+                    return typed;
+            }
+            return await _service.GetEffectiveExcelProtectionPasswordAsync();
+        }
+
+        private async Task PromptAndExportTemplateExcelAsync(
+            int evaluatorId,
+            string evaluatorName,
+            int fallbackTemplateId,
+            TemplateFullModel? preloadedSelectedMonthModel)
+        {
+            int targetYear = SelectedTemplateYear;
+            int targetMonth = SelectedTemplateMonth;
+
+            var optionsDlg = new ExportTemplateExcelOptionsDialog(evaluatorName, targetYear, targetMonth)
+            {
+                Owner = Window.GetWindow(this)
+            };
+
+            if (optionsDlg.ShowDialog() != true || optionsDlg.SelectedScope == TemplateExcelExportScope.Cancel)
+                return;
+
+            string protectionPassword = await ResolveExcelProtectionPasswordForExportAsync();
+            string safeEvalName = SanitizeFileNamePart(evaluatorName);
+
+            if (optionsDlg.SelectedScope == TemplateExcelExportScope.SelectedMonthOnly)
+            {
+                TemplateFullModel? model = preloadedSelectedMonthModel
+                    ?? await _service.GetTemplateFullDetailsAsync(fallbackTemplateId, targetYear, targetMonth);
+
+                if (model == null || model.Sheets.Count == 0)
+                {
+                    MessageBox.Show("لا توجد أوراق في القالب لاستخراجها.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                string monthName = IncentiveCalculatorService.GetArabicMonthName(targetMonth);
+                var sfd = new SaveFileDialog
+                {
+                    Title = $"استخراج قالب التقييم لشهر ({monthName} {targetYear} م) بصيغة Excel",
+                    Filter = "Excel Workbook (*.xlsx)|*.xlsx",
+                    FileName = $"{targetMonth:00}_قالب_تقييم_{monthName}_{safeEvalName}.xlsx"
+                };
+
+                if (sfd.ShowDialog() == true)
+                {
+                    try
+                    {
+                        TemplateExcelExportService.GenerateTemplateExcel(
+                            model,
+                            sfd.FileName,
+                            targetYear,
+                            targetMonth,
+                            protectionPassword);
+
+                        var openNow = MessageBox.Show(
+                            $"✔ تم استخراج قالب التقييم المحمي لشهر ({monthName} {targetYear} م) بنجاح في المسار:\n{sfd.FileName}\n\n" +
+                            "🔒 الأسماء والأكواد والمجموع مقفلة ومحمية، وخلايا الدرجات فقط مفتوحة للإدخال.\n" +
+                            "هل تريد فتح ملف الإكسل الآن؟",
+                            "تم استخراج القالب (Excel)",
+                            MessageBoxButton.YesNo,
+                            MessageBoxImage.Information);
+
+                        if (openNow == MessageBoxResult.Yes)
+                        {
+                            Process.Start(new ProcessStartInfo
+                            {
+                                FileName = sfd.FileName,
+                                UseShellExecute = true
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show($"حدث خطأ أثناء توليد ملف الإكسل:\n{ex.Message}", "خطأ تصدير", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
                 return;
             }
 
-            var sfd = new SaveFileDialog
+            // استخراج جميع الشهور (12 شهراً) داخل مجلد واحد باسم (قوالب تقييم - اسم المقيم (السنة))
+            var folderDialog = new OpenFolderDialog
             {
-                Title = "استخراج قالب التقييم الشهري بصيغة Excel",
-                Filter = "Excel Workbook (*.xlsx)|*.xlsx",
-                FileName = $"قالب_تقييم_{templateToExport.EvaluatorName}_v{templateToExport.VersionNumber}.xlsx"
+                Title = $"اختر المكان الذي سيتم فيه إنشاء مجلد (قوالب تقييم - {safeEvalName} ({targetYear}))"
             };
 
-            if (sfd.ShowDialog() == true)
+            if (folderDialog.ShowDialog() != true || string.IsNullOrWhiteSpace(folderDialog.FolderName))
+                return;
+
+            string folderName = $"قوالب تقييم - {safeEvalName} ({targetYear})";
+            string targetFolder = Path.Combine(folderDialog.FolderName, folderName);
+
+            BtnExportSelectedTemplateExcel.IsEnabled = false;
+            BtnDesignerExportExcel.IsEnabled = false;
+            try
             {
-                try
+                Directory.CreateDirectory(targetFolder);
+                int exportedCount = 0;
+
+                for (int m = 1; m <= 12; m++)
                 {
-                    TemplateExcelExportService.GenerateTemplateExcel(templateToExport, sfd.FileName);
-
-                    var openNow = MessageBox.Show(
-                        $"تم استخراج قالب التقييم بصيغة Excel بنجاح في المسار:\n{sfd.FileName}\n\n(يمكنك تعبئة الدرجات في هذا الملف ثم رفعه مباشرة في شاشة إدخال التقييمات الشهرية).\nهل تريد فتح ملف الإكسل الآن؟",
-                        "تم استخراج القالب (Excel)",
-                        MessageBoxButton.YesNo,
-                        MessageBoxImage.Information);
-
-                    if (openNow == MessageBoxResult.Yes)
+                    TemplateFullModel? monthModel;
+                    if (preloadedSelectedMonthModel != null && m == targetMonth)
                     {
-                        Process.Start(new ProcessStartInfo
-                        {
-                            FileName = sfd.FileName,
-                            UseShellExecute = true
-                        });
+                        monthModel = preloadedSelectedMonthModel;
                     }
+                    else
+                    {
+                        int resolvedTid = await _service.ResolveTemplateIdForEvaluatorInMonthAsync(evaluatorId, targetYear, m);
+                        if (resolvedTid <= 0) resolvedTid = fallbackTemplateId;
+                        if (resolvedTid <= 0) continue;
+
+                        monthModel = await _service.GetTemplateFullDetailsAsync(resolvedTid, targetYear, m);
+                    }
+
+                    if (monthModel == null || monthModel.Sheets.Count == 0)
+                        continue;
+
+                    string mName = IncentiveCalculatorService.GetArabicMonthName(m);
+                    string fileName = $"{m:00}_قالب_تقييم_{mName}_{safeEvalName}.xlsx";
+                    string filePath = Path.Combine(targetFolder, fileName);
+
+                    TemplateExcelExportService.GenerateTemplateExcel(
+                        monthModel,
+                        filePath,
+                        targetYear,
+                        m,
+                        protectionPassword);
+
+                    exportedCount++;
                 }
-                catch (Exception ex)
+
+                if (exportedCount == 0)
                 {
-                    MessageBox.Show($"حدث خطأ أثناء توليد ملف الإكسل:\n{ex.Message}", "خطأ تصدير", MessageBoxButton.OK, MessageBoxImage.Error);
+                    MessageBox.Show("لم يتم توليد أي ملفات لأن القالب لا يحتوي على أوراق تقييم.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
                 }
+
+                var openFolderChoice = MessageBox.Show(
+                    $"✔ تم استخراج ({exportedCount}) قالب تقييم محمي لجميع أشهر سنة ({targetYear} م) بنجاح داخل المجلد:\n{targetFolder}\n\n" +
+                    "• كل شهر تم توليده بنسخة القالب وموظفي ذلك الشهر تحديداً.\n" +
+                    "• جميع الملفات محمية بكلمة سر قوالب الإكسل المعتمدة.\n\n" +
+                    "هل تريد فتح المجلد الآن؟",
+                    "تم استخراج قوالب جميع الشهور",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information);
+
+                if (openFolderChoice == MessageBoxResult.Yes)
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = targetFolder,
+                        UseShellExecute = true
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"حدث خطأ أثناء استخراج قوالب جميع الشهور:\n{ex.Message}", "خطأ تصدير", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                BtnExportSelectedTemplateExcel.IsEnabled = true;
+                BtnDesignerExportExcel.IsEnabled = _currentTemplate != null;
             }
         }
 
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

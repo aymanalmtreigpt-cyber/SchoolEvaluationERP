@@ -362,17 +362,30 @@ namespace SchoolEvaluationERP.Views
             }
         }
 
+        private static string NormalizeArabicSearch(string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return string.Empty;
+            return text.Trim()
+                .Replace('أ', 'ا')
+                .Replace('إ', 'ا')
+                .Replace('آ', 'ا')
+                .Replace('ة', 'ه')
+                .Replace('ى', 'ي')
+                .Replace("ـ", string.Empty);
+        }
+
         private void ApplyEmployeeSearchFilter()
         {
             if (_activeSheet == null) return;
 
-            string q = TxtSearchEmployee.Text.Trim();
+            string q = NormalizeArabicSearch(TxtSearchEmployee.Text);
             var filtered = string.IsNullOrEmpty(q)
                 ? _activeSheet.EmployeeRows.ToList()
                 : _activeSheet.EmployeeRows.Where(e =>
-                    e.EvaluationName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                    e.BranchName.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                    e.FullJobDisplay.Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
+                    NormalizeArabicSearch(e.EvaluationName).Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    NormalizeArabicSearch(e.SystemName).Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    NormalizeArabicSearch(e.BranchName).Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                    NormalizeArabicSearch(e.FullJobDisplay).Contains(q, StringComparison.OrdinalIgnoreCase)).ToList();
 
             GridBalancingScores.ItemsSource = null;
             GridBalancingScores.ItemsSource = filtered;
@@ -480,6 +493,7 @@ namespace SchoolEvaluationERP.Views
             {
                 foreach (var emp in sheet.EmployeeRows)
                 {
+                    if (emp.HasAnyEmptyCriteria) continue;
                     emp.BalancingDelta += step;
                 }
             }
@@ -497,6 +511,7 @@ namespace SchoolEvaluationERP.Views
             {
                 foreach (var emp in sheet.EmployeeRows)
                 {
+                    if (emp.HasAnyEmptyCriteria) continue;
                     emp.BalancingDelta -= step;
                 }
             }
@@ -550,7 +565,14 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            foreach (var emp in targets)
+            var completedTargets = targets.Where(t => !t.HasAnyEmptyCriteria).ToList();
+            if (completedTargets.Count == 0)
+            {
+                MessageBox.Show("لا يمكن تطبيق الموازنة على موظفين لم تكتمل درجات تقييمهم بعد.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            foreach (var emp in completedTargets)
             {
                 emp.BalancingDelta += step;
             }
@@ -571,7 +593,14 @@ namespace SchoolEvaluationERP.Views
                 return;
             }
 
-            foreach (var emp in targets)
+            var completedTargets = targets.Where(t => !t.HasAnyEmptyCriteria).ToList();
+            if (completedTargets.Count == 0)
+            {
+                MessageBox.Show("لا يمكن تطبيق الموازنة على موظفين لم تكتمل درجات تقييمهم بعد.", "تنبيه", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            foreach (var emp in completedTargets)
             {
                 emp.BalancingDelta -= step;
             }
@@ -607,9 +636,17 @@ namespace SchoolEvaluationERP.Views
             GridBalancingScores.CommitEdit(DataGridEditingUnit.Cell, true);
             GridBalancingScores.CommitEdit(DataGridEditingUnit.Row, true);
 
+            bool isSuccess;
+            string message;
             BtnSaveBalancing.IsEnabled = false;
-            var (isSuccess, message) = await _service.SaveRecordBalancingAdjustmentsAsync(_currentWorkspace);
-            BtnSaveBalancing.IsEnabled = true;
+            try
+            {
+                (isSuccess, message) = await _service.SaveRecordBalancingAdjustmentsAsync(_currentWorkspace);
+            }
+            finally
+            {
+                BtnSaveBalancing.IsEnabled = CanEditBalancing;
+            }
 
             MessageBox.Show(
                 message,
@@ -624,6 +661,12 @@ namespace SchoolEvaluationERP.Views
         }
     }
 }
+
+
+
+
+
+
 
 
 

@@ -356,7 +356,7 @@ namespace SchoolEvaluationERP.Services
                 {
                     foreach (var emp in sheet.EmployeeRows)
                     {
-                        if (emp.BalancingDelta != 0m)
+                        if (!emp.HasAnyEmptyCriteria && emp.BalancingDelta != 0m)
                         {
                             await conn.ExecuteAsync(insertAdjSql, new
                             {
@@ -382,6 +382,7 @@ namespace SchoolEvaluationERP.Services
         }
     }
 }
+
 
 
 
